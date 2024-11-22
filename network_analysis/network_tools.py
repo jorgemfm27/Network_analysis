@@ -1,8 +1,9 @@
-import numpy as np
-from scipy.optimize import minimize
-import matplotlib.pyplot as plt
 from . import circuit_design as cd
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
 import qutip
+from scipy.optimize import minimize
 
 
 def Z_capacitor(Freq: np.array, C: float):
@@ -71,35 +72,6 @@ def M_inductively_coupled_impedance(Freq: np.array, Z: float, L1: float, L2: flo
     M = M_series_impedance(Z_in)
     return M
 
-# def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
-#     '''
-#     An ABCD matrix for a standard T attenuator circuit:
-
-#        R1       R1
-#     --WWWW--|--WWWW--
-#             Z
-#             Z R2
-#             |
-#     ----------------
-#     '''
-#     assert len(Freq.shape), 'Frequency should be given as 1D array'
-#     w = 2*np.pi*Freq
-#     # attenuation linear
-#     attn = 10**(attn_dB/20) #??????
-#     attn = 10**(attn_dB/10)
-#     R1 = Z0*((attn-1)/(attn+1))
-#     R2 = Z0*((2*attn)/(attn**2-1))
-#     # ABCD matrix coeficients
-#     A = 1 + R1/R2
-#     B = R1 * ( 2 + R1/R2)
-#     C = 1/R2
-#     D = 1 + R1/R2
-#     M = np.zeros((len(Freq), 2, 2), dtype=np.complex_)
-#     for i in range(len(Freq)):
-#         M[i] = np.array([[A, B],
-#                          [C, D]])
-#     return M
-
 def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
     '''
     An ABCD matrix for a standard Pi attenuator circuit:
@@ -117,6 +89,29 @@ def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
     attn = 10**(attn_dB/20)
     R1 = Z0*((attn+1)/(attn-1))
     R2 = Z0/2*(attn-1/attn)
+    # ABCD matrix coeficients
+    A = 1 + R2/R1
+    B = R2
+    C = 2/R1 + R2/(R1**2)
+    D = 1 + R2/R1
+    M = np.zeros((len(Freq), 2, 2), dtype=np.complex_)
+    for i in range(len(Freq)):
+        M[i] = np.array([[A, B],
+                         [C, D]])
+    return M
+
+def M_amplifier(Freq: np.array, gain_dB: float, Z0:float):
+    '''
+    An ABCD matrix for an amplifier.
+    (Using a pi attenuator network with negative attenuation. 
+     May lord have mercy on us...)
+    '''
+    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    assert gain_dB <=40, 'Gain must be at most 40 dB'
+    # attenuation linear
+    gain = 10**(-gain_dB/20)
+    R1 = Z0*((gain+1)/(gain-1))
+    R2 = Z0/2*(gain-1/gain)
     # ABCD matrix coeficients
     A = 1 + R2/R1
     B = R2
@@ -202,7 +197,9 @@ def PSD_thermal(f, T):
     '''
     h = 6.62607015e-34
     kB = 1.380649e-23
-    eta = (h*f/(kB*T))/(np.exp(h*f/(kB*T))-1) # Bose-Einstein
+    # Bose-Einstein distribution
+    eta = (h*f/(kB*T))/(np.exp(h*f/(kB*T))-1)
+    # power spectral density
     PSD = 4*kB*T*eta
     return PSD
 
@@ -243,6 +240,111 @@ class Network():
         self.elements[element_idx] = (name, M_function)
         if properties:
             self.element_properties[element_idx] = properties
+
+    def add_capacitance(self, C: float, element_type: str, element_idx=None):
+        '''
+        Add a capacitive element to the network.
+        Can be made in series or in parallel.
+        '''
+        # Assertion
+        assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
+        # add a series capacitance element to network
+        if element_type == 'series':
+            Z = lambda frequency: Z_capacitor(Freq=frequency, C=C)
+            M_C = lambda frequency: M_series_impedance(Z=Z(frequency))
+        else:
+            Z = lambda frequency: Z_capacitor(Freq=frequency, C=C)
+            M_C = lambda frequency: M_parallel_impedance(Z=Z(frequency))
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_C, name=f'capacitor_{element_type}')
+        else:
+            self._substitute_element(M_C, element_idx, name=f'capacitor_{element_type}')
+
+    def add_inductance(self, L: float, element_type: str, element_idx=None):
+        '''
+        Add an inductive element to the network.
+        Can be made in series or in parallel.
+        '''
+        # Assertion
+        assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
+        # add a series capacitance element to network
+        if element_type == 'series':
+            Z = lambda frequency: Z_inductor(Freq=frequency, L=L)
+            M_L = lambda frequency: M_series_impedance(Z=Z(frequency))
+        else:
+            Z = lambda frequency: Z_inductor(Freq=frequency, L=L)
+            M_L = lambda frequency: M_parallel_impedance(Z=Z(frequency))
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_L, name=f'inductor_{element_type}')
+        else:
+            self._substitute_element(M_L, element_idx, name=f'inductor_{element_type}')
+
+    def add_transmission_line(self, length: float, Z0: float, phase_velocity: float, element_idx=None):
+        '''
+        Add a series transmission line element to network.
+        '''
+        M_t = lambda frequency: M_series_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0)
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_t, name='transmission_line')
+        else:
+            self._substitute_element(M_t, element_idx, name='transmission_line')
+
+    def add_attenuator(self, attn_dB: float, Z0: float, temperature_K: float, element_idx=None):
+        '''
+        Add a series attenuator element to network.
+        '''
+        M_a = lambda frequency: M_attenuator(Freq=frequency, attn_dB=attn_dB, Z0=Z0)
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_a, name='attenuator', properties={'attn_dB': attn_dB, 'temperature_K': temperature_K})
+        else:
+            self._substitute_element(M_a, element_idx, name=f'attenuator_{attn_dB:.0f}')
+
+    def add_amplifier(self, gain_dB: float, temperature_K: float, Z0: float, element_idx=None):
+        '''
+        Add a series amplifier element to network.
+        '''
+        M_a = lambda frequency: M_amplifier(Freq=frequency, gain_dB=gain_dB, Z0=Z0)
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_a, name='amplifier', properties={'gain_dB': gain_dB, 'temperature_K': temperature_K})
+        else:
+            self._substitute_element(M_a, element_idx, name=f'amplifier_{gain_dB:.0f}')
+
+    def add_capacitively_coupled_hanger(self, length: float, Z0: float, phase_velocity: float, Z_termination: float, C_coupling: float, element_idx=None):
+        '''
+        Add a parallel terminated transmission line
+        in series with a capacitor element to network.
+        '''
+        # impedance of capacitor
+        Z_C = lambda frequency: Z_capacitor(Freq=frequency, C=C_coupling)
+        # impedance of terminated transmission line
+        Z_t = lambda frequency: Z_term_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_termination)
+        # ABCD matrix of parallel elements
+        M_t = lambda frequency: M_parallel_impedance(Z=Z_C(frequency)+Z_t(frequency))
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_t, name='cap_resonator')
+        else:
+            self._substitute_element(M_t, element_idx, name='cap_resonator')
+
+    def add_inductively_coupled_hanger(self, length: float, Z0: float, phase_velocity: float, Z_termination: float, L_line: float, L_hanger: float, M_inductance: float, element_idx=None):
+        '''
+        Add a parallel terminated transmission line
+        inductively coupled to main line of network.
+        '''
+        # impedance of terminated transmission line
+        Z_t = lambda frequency: Z_term_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_termination)
+        # ABCD matrix of parallel elements
+        M_t = lambda frequency: M_inductively_coupled_impedance(Freq=frequency, Z=Z_t(frequency), L1=L_line, L2=L_hanger, M=M_inductance)
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_t, name='ind_resonator')
+        else:
+            self._substitute_element(M_t, element_idx, name='ind_resonator')
 
     def get_S_parameters(self, frequency):
         '''
@@ -335,6 +437,7 @@ class Network():
         M_system = np.array([np.linalg.inv(m) for m in M_system])
         # get node voltage and current
         A_node = np.einsum('nij,nj->ni', M_system, A_0)
+        # print(A_0, M_system[0], np.dot(M_system[0], A_0[0]))
         vnode, inode = A_node[:,0], A_node[:,1]
         return vnode, inode
 
@@ -342,8 +445,8 @@ class Network():
         '''
         Calculate the cascaded psd from all finite temperature elements in the network
         '''
-        # Start with a 0 PSD
-        PSD = np.zeros(frequency.shape)
+        # Start with a 300 K PSD
+        PSD = PSD_thermal(frequency, T=300)
         if plot:
             fig, ax = plt.subplots(figsize=(4, 4))
             ax.set_xscale('log')
@@ -351,6 +454,7 @@ class Network():
             ax.set_xlabel('frequency (Hz)')
             ax.set_ylabel('PSD ($\\mathrm{{\\:J\\:Hz^{-1}}}$)')
             ax.set_title(f'Cumulative PSD at node {node_idx}')
+            ax.plot(frequency, PSD, label=f'node 0 ({quantity_to_string(300, "K")})', color=f'teal')
         # Loop through all nodes up to the selected node
         for idx, (element, _) in enumerate(self.elements[:node_idx]):
             _node_idx = idx+1
@@ -362,9 +466,18 @@ class Network():
                 PSD = (1-attn)*PSD_thermal(frequency, temperature_K) + attn*PSD
                 # plot current PSD
                 if plot:
-                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({temperature_K} K)', color=f'C{idx}')
-                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K),
-                    #         color=f'C{idx}', ls='--', autoscale=False)
+                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=f'C{idx}')
+                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=f'C{idx}', ls='--', autoscale=False)
+            elif element == 'amplifier':
+                temperature_K = self.element_properties[idx]['temperature_K']
+                gain_dB = self.element_properties[idx]['gain_dB']
+                gain = 10**(gain_dB/10) # here we should compute attenuation in power
+                # cascaded attenuation
+                PSD = PSD_thermal(frequency, temperature_K) + gain*PSD
+                # plot current PSD
+                if plot:
+                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=f'C{idx}')
+                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=f'C{idx}', ls='--', autoscale=False)
         if plot:
             ax.legend(frameon=False, loc=2, bbox_to_anchor=(1, 1))
         return PSD
@@ -379,12 +492,13 @@ class Network():
         if isinstance(shots, float):
             shots = int(shots)
         bandwidth = frequency.max() - frequency.min()
+        df = frequency[1]-frequency[0]
         PSD_V2 = PSD*self.Zgen
         # ensemble of thermal shots
         v_noise = np.zeros(shots, dtype=np.complex128)
         for i in range(shots):
             phase = np.random.random(101)*2*np.pi
-            v_rms = np.sqrt(PSD_V2*bandwidth)
+            v_rms = np.sqrt(PSD_V2*df)
             v_noise[i] = np.sum(v_rms/np.sqrt(2)*np.exp(1j*phase))
         return v_noise
 
@@ -409,15 +523,17 @@ class Network():
         v_noise = self._generate_thermal_noise_ensemble(frequency=frequency, PSD=PSD, shots=shots)
         v_thermal = v_noise + v_node
         # glot thermal shot distribution
-        fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
-        heatmap, xedges, yedges = np.histogram2d(np.real(v_thermal)*1e6, np.imag(v_thermal)*1e6, bins=21,)
+        fig, ax = plt.subplots(figsize=(3.5, 3.5), dpi=100)
+        heatmap, xedges, yedges = np.histogram2d(np.real(v_thermal), np.imag(v_thermal), bins=21,)
         ax.pcolormesh(xedges, yedges, heatmap, cmap='Blues')
-        axlim = np.abs(np.concatenate((xedges, yedges))).max()
+        ax.grid(ls='--', lw=1, color='gray', alpha=.25)
+        ax.annotate('', xy=(np.real(v_node), np.imag(v_node)), xytext=(0, 0),
+                    arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
+        axlim = np.abs(np.concatenate((xedges, yedges))).max()*1.1
         ax.set_xlim(-axlim, axlim)
         ax.set_ylim(-axlim, axlim)
-        ax.grid(ls='--', lw=1, color='gray', alpha=.25)
-        ax.set_ylabel('Voltage Q ($\\mathrm{{\\mu}}$V)')
-        ax.set_xlabel('Voltage I ($\\mathrm{{\\mu}}$V)')
+        set_xlabel(ax, 'Voltage I', unit='V')
+        set_ylabel(ax, 'Voltage Q', unit='V')
         ax.set_title(f'Thermal voltage at node {node_idx}')
 
     def get_node_quantum_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0):
@@ -441,8 +557,6 @@ class Network():
         Phi_0 = h/(2*e)  # flux quantum
         R_Q = h/(4*e**2) # resistance quantum
         V_zpf = (2*np.pi*in_freq)*Phi_0*np.sqrt(z_node/(R_Q*4*np.pi))
-        # V_zpf = np.sqrt( h*in_freq/(2*self.Zgen) )
-        # V_zpf = np.abs(V_zpf)
         # calculate equivalent coherent state
         alpha = (v_node/V_zpf)/2
         N = 200
@@ -453,7 +567,7 @@ class Network():
         x_vec = np.linspace(-10, 10, 61)
         W_func = qutip.wigner(state, x_vec, x_vec)
         # Plot wigner function
-        fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
+        fig, ax = plt.subplots(figsize=(3.5, 3.5), dpi=100)
         x_volt = 2*V_zpf*x_vec
         ax.pcolormesh(x_vec, x_vec, W_func, cmap='Blues', shading='nearest')
         ax.grid(ls='--', lw=1, color='gray', alpha=.25)
@@ -461,6 +575,8 @@ class Network():
         ax.set_xlabel('$X$ Quadrature')
         ax.set_title(f'Quantum voltage at node {node_idx}')
         ax.plot(np.real(alpha), np.imag(alpha), 'C3x' )
+        ax.annotate('', xy=(np.real(alpha), np.imag(alpha)), xytext=(0, 0),
+                    arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
         # Vzpf axes
         ax_vy = ax.twinx()
         ax_vx = ax.twiny()
@@ -472,100 +588,6 @@ class Network():
         # # ax_vy.axhline(np.imag(v_node*1e6), color='C3', ls='--')
         # ax_vx.axvline(np.real(v_node*1e6), color='C3', ls='--')
         # ax_vy.axhline(np.imag(v_node*1e6), color='C3', ls='--')
-
-    def add_capacitance(self, C: float, element_type: str, element_idx=None):
-        '''
-        Add a capacitive element to the network.
-        Can be made in series or in parallel.
-        '''
-        # Assertion
-        assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
-        # add a series capacitance element to network
-        if element_type == 'series':
-            Z = lambda frequency: Z_capacitor(Freq=frequency, C=C)
-            M_C = lambda frequency: M_series_impedance(Z=Z(frequency))
-        else:
-            Z = lambda frequency: Z_capacitor(Freq=frequency, C=C)
-            M_C = lambda frequency: M_parallel_impedance(Z=Z(frequency))
-        # if element already exists
-        if element_idx is None:
-            self._add_element(M_C, name=f'capacitor_{element_type}')
-        else:
-            self._substitute_element(M_C, element_idx, name=f'capacitor_{element_type}')
-
-    def add_inductance(self, L: float, element_type: str, element_idx=None):
-        '''
-        Add an inductive element to the network.
-        Can be made in series or in parallel.
-        '''
-        # Assertion
-        assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
-        # add a series capacitance element to network
-        if element_type == 'series':
-            Z = lambda frequency: Z_inductor(Freq=frequency, L=L)
-            M_L = lambda frequency: M_series_impedance(Z=Z(frequency))
-        else:
-            Z = lambda frequency: Z_inductor(Freq=frequency, L=L)
-            M_L = lambda frequency: M_parallel_impedance(Z=Z(frequency))
-        # if element already exists
-        if element_idx is None:
-            self._add_element(M_L, name=f'inductor_{element_type}')
-        else:
-            self._substitute_element(M_L, element_idx, name=f'inductor_{element_type}')
-
-    def add_transmission_line(self, length: float, Z0: float, phase_velocity: float, element_idx=None):
-        '''
-        Add a series transmission line element to network.
-        '''
-        M_t = lambda frequency: M_series_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0)
-        # if element already exists
-        if element_idx is None:
-            self._add_element(M_t, name='transmission_line')
-        else:
-            self._substitute_element(M_t, element_idx, name='transmission_line')
-
-    def add_attenuator(self, attn_dB: float, Z0: float, temperature_K: float, element_idx=None):
-        '''
-        Add a series attenuator element to network.
-        '''
-        M_a = lambda frequency: M_attenuator(Freq=frequency, attn_dB=attn_dB, Z0=Z0)
-        # if element already exists
-        if element_idx is None:
-            self._add_element(M_a, name='attenuator', properties={'attn_dB': attn_dB, 'temperature_K': temperature_K})
-        else:
-            self._substitute_element(M_a, element_idx, name=f'attenuator_{attn_dB:.0f}')
-
-    def add_capacitively_coupled_hanger(self, length: float, Z0: float, phase_velocity: float, Z_termination: float, C_coupling: float, element_idx=None):
-        '''
-        Add a parallel terminated transmission line
-        in series with a capacitor element to network.
-        '''
-        # impedance of capacitor
-        Z_C = lambda frequency: Z_capacitor(Freq=frequency, C=C_coupling)
-        # impedance of terminated transmission line
-        Z_t = lambda frequency: Z_term_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_termination)
-        # ABCD matrix of parallel elements
-        M_t = lambda frequency: M_parallel_impedance(Z=Z_C(frequency)+Z_t(frequency))
-        # if element already exists
-        if element_idx is None:
-            self._add_element(M_t, name='cap_resonator')
-        else:
-            self._substitute_element(M_t, element_idx, name='cap_resonator')
-
-    def add_inductively_coupled_hanger(self, length: float, Z0: float, phase_velocity: float, Z_termination: float, L_line: float, L_hanger: float, M_inductance: float, element_idx=None):
-        '''
-        Add a parallel terminated transmission line
-        inductively coupled to main line of network.
-        '''
-        # impedance of terminated transmission line
-        Z_t = lambda frequency: Z_term_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_termination)
-        # ABCD matrix of parallel elements
-        M_t = lambda frequency: M_inductively_coupled_impedance(Freq=frequency, Z=Z_t(frequency), L1=L_line, L2=L_hanger, M=M_inductance)
-        # if element already exists
-        if element_idx is None:
-            self._add_element(M_t, name='ind_resonator')
-        else:
-            self._substitute_element(M_t, element_idx, name='ind_resonator')
 
     def find_resonance_parameters(self, frequency_bounds: tuple):
         '''
@@ -642,13 +664,20 @@ class Network():
                 cd.plot_inductor(x_i+.2, -.3, x_j-.2, -.3, w_ind=.08, lpad=.2)
                 cd.plot_ground(x_j-.2, -.3, .2, horizontal=False)
                 cd.plot_transmission_line(x_i+.2, -.3, .9, horizontal=False, radius=.2)
-            # plot inductively coupled resonator
+            # plot attenuator
             elif 'attenuator' in name:
                 attn_dB = self.element_properties[i]['attn_dB']
                 temperature_K = self.element_properties[i]['temperature_K']
                 cd.plot_attenuator(xij, 0, h=.3, l=.6, attn_dB=attn_dB)
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
-                ax.text(xij, -.5, f'{temperature_K} K', va='center', ha='center')
+                ax.text(xij, -.5, quantity_to_string(temperature_K, 'K'), va='center', ha='center')
+            # plot attenuator
+            elif 'amplifier' in name:
+                gain_dB = self.element_properties[i]['gain_dB']
+                temperature_K = self.element_properties[i]['temperature_K']
+                cd.plot_amplifier(xij, 0, h=.7, l=.7, gain_dB=gain_dB)
+                ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
+                ax.text(xij, -.5, quantity_to_string(temperature_K, 'K'), va='center', ha='center')
             else:
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
                 ax.text(xij, 0, '?', ha='center', va='center')
@@ -661,12 +690,153 @@ class Network():
         plt.show()
 
 
+##############################################
+# Plotting helper functions
+##############################################
+SI_PREFIXES = dict(zip(range(-24, 25, 3), 'yzafpnμm kMGTPEZY'))
+SI_PREFIXES[0] = ""
+SI_UNITS = ',m,s,g,W,J,V,A,F,T,Hz,Ohm,S,N,C,px,b,B,K,Bar,Vpeak,Vpp,Vp,Vrms,$\Phi_0$,A/s'.split(
+    ',')
+def SI_prefix_and_scale_factor(val, unit=None):
+    """
+    Takes in a value and unit and if applicable returns the proper
+    scale factor and SI prefix.
+    Args:
+        val (float) : the value
+        unit (str)  : the unit of the value
+    returns:
+        scale_factor (float) : scale_factor needed to convert value
+        unit (str)           : unit including the prefix
+    """
 
+    if unit in SI_UNITS:
+        try:
+            with np.errstate(all="ignore"):
+                prefix_power = np.log10(abs(val))//3 * 3
+                prefix = SI_PREFIXES[prefix_power]
+                # Greek symbols not supported in tex
+                if plt.rcParams['text.usetex'] and prefix == 'μ':
+                    prefix = r'$\mu$'
 
+            return 10 ** -prefix_power, prefix + unit
+        except (KeyError, TypeError):
+            pass
 
+    return 1, unit if unit is not None else ""
 
+def quantity_to_string(val, unit, error=None, decimal_place=0):
+    scale_factor, prefix = SI_prefix_and_scale_factor(val, unit)
+    scaled_val = val*scale_factor
+    if error: # write number with uncertainty
+        try:
+            decimal_place = -int(np.round(np.log10(error*scale_factor)))
+            if decimal_place < 0:
+                uncert = int(scaled_val%(10**-decimal_place)*(10**(decimal_place+1)))
+                scaled_val = (scaled_val//(10**-decimal_place))
+                quantity_str = '{:.0f}({}) {}'.format(scaled_val, uncert, prefix)
+            elif decimal_place == 0:
+                uncert = int(scaled_val%(10**-decimal_place)*(10**(decimal_place+1)))
+                scaled_val = (scaled_val//(10**-decimal_place))
+                quantity_str = '{:.0f}.({}) {}'.format(scaled_val, uncert, prefix)
+            else:
+                uncert = int(scaled_val%(10**-decimal_place)*(10**(decimal_place+1)))
+                scaled_val = (scaled_val//(10**-decimal_place))*(10**-decimal_place)
+                quantity_str = '{:.{}f}({}) {}'.format(scaled_val, decimal_place, uncert, prefix)
+        except:
+            print('Could not write uncertainty!')
+            decimal_place = 0
+            quantity_str = '{:.{}f} {}'.format(scaled_val, decimal_place, prefix)
+    else:
+        quantity_str = '{:.{}f} {}'.format(scaled_val, decimal_place, prefix)
+    return quantity_str
 
+def set_xlabel(axis, label, unit=None, latexify_ticks=False, **kw):
+    """
+    Add a unit aware x-label to an axis object.
+    Args:
+        axis: matplotlib axis object to set label on
+        label: the desired label
+        unit:  the unit
+        **kw : keyword argument to be passed to matplotlib.set_xlabel
+    """
+    if unit is not None and unit != '':
+        xticks = axis.get_xticks()
+        scale_factor, unit = SI_prefix_and_scale_factor(
+            val=max(abs(xticks)), unit=unit)
+        tick_str = '{:.4g}' if not latexify_ticks else r'${:.4g}$'
+        formatter = matplotlib.ticker.FuncFormatter(
+            lambda x, pos: tick_str.format(x * scale_factor))
+        axis.xaxis.set_major_formatter(formatter)
+        axis.set_xlabel(label + ' ({})'.format(unit), **kw)
+    else:
+        axis.set_xlabel(label, **kw)
+    return axis
 
+def set_ylabel(axis, label, unit=None, latexify_ticks=False, **kw):
+    """
+    Add a unit aware y-label to an axis object.
+    Args:
+        axis: matplotlib axis object to set label on
+        label: the desired label
+        unit:  the unit
+        **kw : keyword argument to be passed to matplotlib.set_ylabel
+    """
+    if unit is not None and unit != '':
+        yticks = axis.get_yticks()
+        scale_factor, unit = SI_prefix_and_scale_factor(
+            val=max(abs(yticks)), unit=unit)
+        tick_str = '{:.6g}' if not latexify_ticks else r'${:.6g}$'
+        formatter = matplotlib.ticker.FuncFormatter(
+            lambda x, pos: tick_str.format(x * scale_factor))
+        axis.yaxis.set_major_formatter(formatter)
+        axis.set_ylabel(label + ' ({})'.format(unit), **kw)
+    else:
+        axis.set_ylabel(label, **kw)
+    return axis
 
+def set_cbarlabel(cbar, label, unit=None, **kw):
+    """
+    Add a unit aware z-label to a colorbar object
 
+    Args:
+        cbar: colorbar object to set label on
+        label: the desired label
+        unit:  the unit
+        **kw : keyword argument to be passed to cbar.set_label
+    """
+    if unit is not None and unit != '':
+        zticks = cbar.get_ticks()[1:-1]
+        scale_factor, unit = SI_prefix_and_scale_factor(
+            val=max(abs(zticks)), unit=unit)
+        cbar.set_ticks(zticks)
+        cbar.set_ticklabels([f'{v:.3g}' for v in zticks*scale_factor])
+        cbar.set_label(label + ' ({})'.format(unit))
+    else:
+        cbar.set_label(label, **kw)
+    return cbar
 
+def set_aspect_ratio_lim(axis, ratio_x, ratio_y):
+    '''
+    Adjust limits of axis to achieve a desired aspect ratio.
+    '''
+    xlim = axis.get_xlim()
+    ylim = axis.get_ylim()
+    dx = abs(xlim[0]-xlim[1])
+    dy = abs(ylim[1]-ylim[0])
+    aspect_ratio = dy/dx
+    if aspect_ratio < 1:
+        ylim_new = np.mean(ylim) - dx/2*ratio_y, np.mean(ylim) + dx/2*ratio_y
+        xlim_new = np.mean(xlim) - dx/2*ratio_x, np.mean(xlim) + dx/2*ratio_x
+    else:
+        xlim_new = np.mean(xlim) - dy/2*ratio_x, np.mean(xlim) + dy/2*ratio_x
+        ylim_new = np.mean(ylim) - dy/2*ratio_y, np.mean(ylim) + dy/2*ratio_y
+    axis.set_xlim(xlim_new)
+    axis.set_ylim(ylim_new)
+
+def move_subplot(ax, dx: float = 0, dy: float = 0):
+    '''
+    Move subplot by dx and dy
+    '''
+    pos = ax.get_position()
+    pos = [pos.x0+dx*pos.width, pos.y0+dy*pos.height, pos.width, pos.height]
+    ax.set_position(pos)

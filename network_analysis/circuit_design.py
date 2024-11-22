@@ -1,66 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch
-
-def draw_fluxonium(x1, y1, mirror=False, highlight_capacitor=False, ground_caps=True, **kwargs):
-    '''
-    Draws a fluxonium circuit.
-    '''
-    # get current axis
-    ax = plt.gca()
-    # Plot settings
-    _plot_args = dict(color='k', lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
-    # Coordinates of loop
-    _x = np.array([ -.4, -.5, -.5, +.5, +.5, +.4])
-    _y = np.array([ -.5, -.5, +.5, +.5, -.5, -.5])
-    # Fluxonium
-    if mirror:
-        _y *= -1
-    ax.plot(x1+_x, y1+_y, **{**_plot_args, 'color':'#e0e1dd' if highlight_capacitor else 'k'})
-    # Inductance
-    _phase = np.linspace(0, 2*np.pi, 1001)
-    _y_l = 0.1*np.sin(_phase*2.5)*(2*mirror-1)+_y[0]
-    _x_l = 0.1*np.cos(_phase*2.5)-_phase/(2*np.pi)*0.6-.3
-    ax.plot(x1+_x_l+.6, y1+_y_l, **{**_plot_args, 'color':'#e0e1dd' if highlight_capacitor else 'k'})
-    # Josephson junction
-    ax.plot([x1-.1, x1+.1], [y1-.1+_y[2], y1+.1+_y[2]], **{**_plot_args, 'color':'#e0e1dd' if highlight_capacitor else 'k'}) # Junction
-    ax.plot([x1-.1, x1+.1], [y1+.1+_y[2], y1-.1+_y[2]], **{**_plot_args, 'color':'#e0e1dd' if highlight_capacitor else 'k'}) #
-    # Capacitor
-    ax.plot([x1-.5, x1-.1], [y1, y1], **_plot_args)         #
-    ax.plot([x1+.5, x1+.1], [y1, y1], **_plot_args)         #
-    ax.plot([x1-.1, x1-.1], [y1+.15, y1-.15], **_plot_args) # Capacitor
-    ax.plot([x1+.1, x1+.1], [y1+.15, y1-.15], **_plot_args) #
-    # Plot grounding caps at nodes
-    plot_ground_capacitance(x1+.5, y1-.5, l=.5, horizontal=False)
-    plot_ground_capacitance(x1-.5, y1-.5, l=.5, horizontal=False)
-    ax.plot([x1-.5, x1-.5], [y1, y1-.5], **{**_plot_args, 'solid_capstyle':None})
-    ax.plot([x1+.5, x1+.5], [y1, y1-.5], **{**_plot_args, 'solid_capstyle':None})
-
-
-def plot_ground_capacitance(x, y, l, l_cap=.1, cap_dist=.15, horizontal=True, **kwargs):
-    '''
-    Draw ground capacitance
-    '''
-    # get current axis
-    ax = plt.gca()
-    # Plot settings
-    _plot_args = dict(color='k', lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
-    # Capacitor direction
-    if horizontal:
-        ax.plot([x, x-l/2+cap_dist/2, x-l/2+cap_dist/2, x-l/2+cap_dist/2], [y, y, y+l_cap, y-l_cap], **_plot_args, zorder=-1)
-        ax.plot([x-l*4/3, x-l*4/3, x-l*4/3, x-l*7/3], [ y+l_cap, y-l_cap, y, y], **_plot_args, zorder=-1)
-        # ground
-        ax.plot([x-l-np.sign(l)*.00, x-l-np.sign(l)*.00], [ y+.10, y-.10], **_plot_args, zorder=-1)
-        ax.plot([x-l-np.sign(l)*.05, x-l-np.sign(l)*.05], [ y+.05, y-.05], **_plot_args, zorder=-1)
-        ax.plot([x-l-np.sign(l)*.10, x-l-np.sign(l)*.10], [ y+.01, y-.01], **_plot_args, zorder=-1)
-    # Vertical capacitor
-    if not horizontal:
-        ax.plot([x, x, x+l_cap, x-l_cap], [y, y-l/2+cap_dist/2, y-l/2+cap_dist/2, y-l/2+cap_dist/2], **_plot_args, zorder=-1)
-        ax.plot([ x+l_cap, x-l_cap, x, x], [y-l/2-cap_dist/2, y-l/2-cap_dist/2, y-l/2-cap_dist/2, y-l], **_plot_args, zorder=-1)
-        # ground
-        ax.plot([ x+.10, x-.10], [y-l-np.sign(l)*.00, y-l-np.sign(l)*.00], **_plot_args, zorder=-1)
-        ax.plot([ x+.05, x-.05], [y-l-np.sign(l)*.05, y-l-np.sign(l)*.05], **_plot_args, zorder=-1)
-        ax.plot([ x+.01, x-.01], [y-l-np.sign(l)*.10, y-l-np.sign(l)*.10], **_plot_args, zorder=-1)
+from matplotlib.patches import FancyBboxPatch, Polygon
 
 
 def plot_capacitor(x0, y0, x1, y1, l_cap=.1, cap_dist=.15, **kwargs):
@@ -84,7 +24,6 @@ def plot_capacitor(x0, y0, x1, y1, l_cap=.1, cap_dist=.15, **kwargs):
             [y0+(L-cap_dist/2)*np.sin(theta)-l_cap*np.cos(theta), y0+(L-cap_dist/2)*np.sin(theta)+l_cap*np.cos(theta)], **_plot_args)
     ax.plot([x1-(L-cap_dist/2)*np.cos(theta)-l_cap*np.sin(theta), x1-(L-cap_dist/2)*np.cos(theta)+l_cap*np.sin(theta)],
             [y1-(L-cap_dist/2)*np.sin(theta)+l_cap*np.cos(theta), y1-(L-cap_dist/2)*np.sin(theta)-l_cap*np.cos(theta)], **_plot_args)
-
 
 def plot_inductor(x0, y0, x1, y1, w_ind=.05, lpad=0, **kwargs):
     '''
@@ -114,9 +53,7 @@ def plot_inductor(x0, y0, x1, y1, w_ind=.05, lpad=0, **kwargs):
 
 def plot_attenuator(x0, y0, h=.1, l=.3, attn_dB=None, **kwargs):
     '''
-    Plot inductor coil between (x0, y0) and (x1, y1).
-    Args:
-        w_ind : Width of inductor coil.
+    Plot attenuator.
     '''
     # get current axis
     ax = plt.gca()
@@ -132,6 +69,22 @@ def plot_attenuator(x0, y0, h=.1, l=.3, attn_dB=None, **kwargs):
     # if attn_dB:
     ax.text(x0, y0, f'{attn_dB:.0f} dB', va='center', ha='center', zorder=3, size=12)
 
+def plot_amplifier(x0, y0, h=.1, l=.3, gain_dB=None, **kwargs):
+    '''
+    Plot amplifier
+    '''
+    # get current axis
+    ax = plt.gca()
+    # Plot settings
+    _plot_args = dict(joinstyle='round', zorder=3,
+                      ec='k', fc=kwargs.get('color', 'w'),
+                      lw=kwargs.get('lw', 4), clip_on=False)
+    # displacement
+    triangle = Polygon([(x0-l/2, y0-h/2), (x0-l/2, y0+h/2), (x0+l/2, y0)], **_plot_args)
+    # Plot rotated inductor
+    ax.add_patch(triangle)
+    # # if gain_dB:
+    ax.text(x0-l/10, y0, f'{gain_dB} dB', va='center', ha='center', zorder=3, size=9)
 
 def plot_transmission_line(x, y, l, horizontal=True, radius=.1, **kwargs):
     '''
@@ -167,7 +120,6 @@ def plot_transmission_line(x, y, l, horizontal=True, radius=.1, **kwargs):
         ax.plot([x, x], [y, y-radius], **_plot_args)
         ax.plot([x, x], [y-l+radius/2, y-l], **_plot_args)
 
-
 def plot_ground(x, y, l, lpad=0.1, horizontal=False, **kwargs):
     '''
     Draw ground conection
@@ -190,7 +142,6 @@ def plot_ground(x, y, l, lpad=0.1, horizontal=False, **kwargs):
         ax.plot([ x+lpad, x-lpad], [y-l-np.sign(l)*.00, y-l-np.sign(l)*.00], **_plot_args, zorder=-1)
         ax.plot([ x+lpad/2, x-lpad/2], [y-l-np.sign(l)*lpad/2, y-l-np.sign(l)*lpad/2], **_plot_args, zorder=-1)
         ax.plot([ x+lpad/8, x-lpad/8], [y-l-np.sign(l)*lpad, y-l-np.sign(l)*lpad], **_plot_args, zorder=-1)
-
 
 def plot_drive(x0, y0, x1, y1, amp=0.2, **kwargs):
     '''
