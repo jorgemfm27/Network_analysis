@@ -520,7 +520,7 @@ class Network():
         else:
             return PSD
 
-    def _generate_thermal_noise_ensemble(self, frequency: float, PSD: float, shots: int = 10000):
+    def _generate_thermal_noise_ensemble(self, frequency: float, PSD: float, shots: int = 100000):
         '''
         Get a thermal ensemble of voltage shots.
         Args:
@@ -541,7 +541,7 @@ class Network():
         return v_noise
 
     def get_node_thermal_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0,
-                            shots: int = 10000, add_quantum_noise: bool = False, on_figure: bool = False):
+                            shots: int = 100000, add_quantum_noise: bool = False, on_figure: bool = False):
         '''
         Compute the voltage and current at a given node of the network for an input coherent state
         and compute Wigner function in voltage.
@@ -649,7 +649,7 @@ class Network():
         # ax_vx.axvline(np.real(v_node*1e6), color='C3', ls='--')
         # ax_vy.axhline(np.imag(v_node*1e6), color='C3', ls='--')
         # get thermal voltages ensemble
-        # V_func = np.random.multivariate_normal((np.real(v_node), np.imag(v_node)), np.array([[V_zpf,0], [0, V_zpf]]), 10000)
+        # V_func = np.random.multivariate_normal((np.real(v_node), np.imag(v_node)), np.array([[V_zpf,0], [0, V_zpf]]), 100000)
         # x_volt = x_vec*V_zpf
         # ax.pcolormesh(x_volt, x_volt, W_func, cmap='Blues', shading='nearest')
         # set_ylabel(ax, 'Voltage Q', 'V')
