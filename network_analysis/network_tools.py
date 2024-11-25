@@ -87,13 +87,17 @@ def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
     w = 2*np.pi*Freq
     # attenuation linear
     attn = 10**(attn_dB/20)
-    R1 = Z0*((attn+1)/(attn-1))
-    R2 = Z0/2*(attn-1/attn)
-    # ABCD matrix coeficients
-    A = 1 + R2/R1
-    B = R2
-    C = 2/R1 + R2/(R1**2)
-    D = 1 + R2/R1
+    # deal with 0 dB attenuators
+    if attn_dB == 0:
+        A, B, C, D = 1, 0, 0, 1
+    else:
+        R1 = Z0*((attn+1)/(attn-1))
+        R2 = Z0/2*(attn-1/attn)
+        # ABCD matrix coeficients
+        A = 1 + R2/R1
+        B = R2
+        C = 2/R1 + R2/(R1**2)
+        D = 1 + R2/R1
     M = np.zeros((len(Freq), 2, 2), dtype=np.complex_)
     for i in range(len(Freq)):
         M[i] = np.array([[A, B],
@@ -193,7 +197,6 @@ def PSD_thermal(f, T):
     Power spectral density at temperature T in units J/Hz.
     Args:
         T  : temperature in Kelvin.
-        Z0 : Impedance of system.
     '''
     h = 6.62607015e-34
     kB = 1.380649e-23
@@ -202,6 +205,23 @@ def PSD_thermal(f, T):
     # power spectral density
     PSD = 4*kB*T*eta
     return PSD
+
+def PSD_quantum(f, Z0):
+    '''
+    Power spectral density of quantum coherent state.
+    Args:
+        Z0 : Impedance of system.
+    '''
+    # calculate vacuum state fluctuations of voltage
+    h = 6.62607015e-34
+    e = 1.602176634e-19
+    Phi_0 = h/(2*e)  # flux quantum
+    R_Q = h/(4*e**2) # resistance quantum
+    V_zpf = (2*np.pi*np.mean(f))*Phi_0*np.sqrt(Z0/(R_Q*4*np.pi))
+    bandwidth = f.max()-f.min()
+    PSD = np.ones(f.shape)*2*V_zpf**2/Z0/bandwidth
+    return PSD
+
 
 def Vp_from_PdBm(P_dBm, R=50):
     '''
@@ -221,6 +241,8 @@ class Network():
         self.element_properties = {}
         # Loading of ports when extracting scattering and impedance parameters
         self.Zgen = Zgen
+        # Figure storing network plot
+        self.fig = None
 
     def _add_element(self, M_function, name, properties=None):
         '''
@@ -346,7 +368,7 @@ class Network():
         else:
             self._substitute_element(M_t, element_idx, name='ind_resonator')
 
-    def get_S_parameters(self, frequency):
+    def get_S_parameters(self, frequency, plot: bool = False):
         '''
         Compute the S parameters of the network
         over a frequency range.
@@ -364,6 +386,15 @@ class Network():
         M_system = multiply_matrices([*M_elements])
         # Compute scattering parameters
         S11, S12, S21, S22 = extract_S_pars(M_system, Zgen=self.Zgen)
+        # plot parameters
+        if plot:
+            fig, axs = plt.subplots(figsize=(6,3), ncols=2, nrows=2, sharex='col', sharey='row')
+            for ax, s_param, name in zip(axs.flatten(), [S11, S12, S21, S22], ['S_{11}', 'S_{12}', 'S_{21}', 'S_{22}']):
+                ax.plot(frequency, np.abs(s_param))
+                if name in ['S_{21}', 'S_{22}']:
+                    set_xlabel(ax, 'frequency', 'Hz')
+                set_ylabel(ax, f'$|{name}|$')
+            fig.suptitle('Scattering parameters')
         return S11, S12, S21, S22
 
     def get_Z_parameters(self, frequency):
@@ -441,12 +472,14 @@ class Network():
         vnode, inode = A_node[:,0], A_node[:,1]
         return vnode, inode
 
-    def get_thermal_psd_at_node(self, node_idx, frequency, plot=False):
+    def get_psd_at_node(self, node_idx: int, frequency: list, plot: bool = False, add_quantum_noise: bool = False):
         '''
         Calculate the cascaded psd from all finite temperature elements in the network
         '''
         # Start with a 300 K PSD
         PSD = PSD_thermal(frequency, T=300)
+        # Quantum coherent state fluctuations
+        PSD_Q = PSD_quantum(frequency, self.Zgen)
         if plot:
             fig, ax = plt.subplots(figsize=(4, 4))
             ax.set_xscale('log')
@@ -471,8 +504,10 @@ class Network():
             elif element == 'amplifier':
                 temperature_K = self.element_properties[idx]['temperature_K']
                 gain_dB = self.element_properties[idx]['gain_dB']
-                gain = 10**(gain_dB/10) # here we should compute attenuation in power
+                gain = 10**(gain_dB/10) # here we should compute gain in power
                 # cascaded attenuation
+                if add_quantum_noise:
+                    PSD += PSD_Q
                 PSD = PSD_thermal(frequency, temperature_K) + gain*PSD
                 # plot current PSD
                 if plot:
@@ -480,7 +515,10 @@ class Network():
                     # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=f'C{idx}', ls='--', autoscale=False)
         if plot:
             ax.legend(frameon=False, loc=2, bbox_to_anchor=(1, 1))
-        return PSD
+        if add_quantum_noise:
+            return PSD + PSD_Q
+        else:
+            return PSD
 
     def _generate_thermal_noise_ensemble(self, frequency: float, PSD: float, shots: int = 10000):
         '''
@@ -502,7 +540,8 @@ class Network():
             v_noise[i] = np.sum(v_rms/np.sqrt(2)*np.exp(1j*phase))
         return v_noise
 
-    def get_node_thermal_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0, shots = 10000):
+    def get_node_thermal_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0,
+                            shots: int = 10000, add_quantum_noise: bool = False, on_figure: bool = False):
         '''
         Compute the voltage and current at a given node of the network for an input coherent state
         and compute Wigner function in voltage.
@@ -512,29 +551,40 @@ class Network():
             in_amp   : input signal amplitude (V).
             in_phase : input signal phase (deg).
         '''
+        # get voltage and current at node
         v_node, i_node = self.get_node_VI(node_idx=node_idx, in_freq=in_freq, in_amp=in_amp, in_phase=in_phase)
         v_node, i_node = v_node[0], i_node[0]
-        z_node = v_node/i_node
         assert (type(v_node) is complex) or (type(v_node) is np.complex128)
         # get thermal voltages ensemble
         bandwidth = 2.4e9
         frequency = np.linspace(-bandwidth/2, bandwidth/2, 101)+in_freq
-        PSD = self.get_thermal_psd_at_node(node_idx=node_idx, frequency=frequency)
+        PSD = self.get_psd_at_node(node_idx=node_idx, frequency=frequency, add_quantum_noise=add_quantum_noise)
         v_noise = self._generate_thermal_noise_ensemble(frequency=frequency, PSD=PSD, shots=shots)
         v_thermal = v_noise + v_node
+        SNR = np.mean(np.abs(v_thermal)) / np.std(np.abs(v_thermal))
         # glot thermal shot distribution
-        fig, ax = plt.subplots(figsize=(3.5, 3.5), dpi=100)
+        if on_figure:
+            ax = self.fig.add_subplot(111)
+            move_subplot(ax, dx=-.5+.725*node_idx, dy=(node_idx%2-.65)*2.5, scale_x=2, scale_y=2)
+            ax_fig = self.fig.get_axes()[0]
+            node_coords = (1.3*node_idx, 0)
+            ax_fig.plot([                     node_coords[0]+.91, node_coords[0],                      node_coords[0]-.89],
+                        [node_coords[1]+(1.1*(node_idx%2)-.65)*2.5+.05, node_coords[1], node_coords[1]+(1.1*(node_idx%2)-.65)*2.5+.05], 
+                        color='k', ls='--', alpha=.2, clip_on=False, zorder=-5)
+        else:
+            fig, ax = plt.subplots(figsize=(3.5, 3.5))
+            ax.set_title(f'Thermal voltage at node {node_idx}')
         heatmap, xedges, yedges = np.histogram2d(np.real(v_thermal), np.imag(v_thermal), bins=21,)
         ax.pcolormesh(xedges, yedges, heatmap, cmap='Blues')
         ax.grid(ls='--', lw=1, color='gray', alpha=.25)
         ax.annotate('', xy=(np.real(v_node), np.imag(v_node)), xytext=(0, 0),
                     arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
+        ax.text(.1, .9, f'SNR$={SNR:.3g}$', va='top', ha='left', transform=ax.transAxes)
         axlim = np.abs(np.concatenate((xedges, yedges))).max()*1.1
         ax.set_xlim(-axlim, axlim)
         ax.set_ylim(-axlim, axlim)
         set_xlabel(ax, 'Voltage I', unit='V')
         set_ylabel(ax, 'Voltage Q', unit='V')
-        ax.set_title(f'Thermal voltage at node {node_idx}')
 
     def get_node_quantum_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0):
         '''
@@ -558,36 +608,52 @@ class Network():
         R_Q = h/(4*e**2) # resistance quantum
         V_zpf = (2*np.pi*in_freq)*Phi_0*np.sqrt(z_node/(R_Q*4*np.pi))
         # calculate equivalent coherent state
-        alpha = (v_node/V_zpf)/2
+        alpha = (v_node/V_zpf)
         N = 200
-        # if type(v_node) is np.ndarray:
-        #     state = sum([qutip.coherent_dm(N, a) for a in alpha])/shots # Thermal mixture of coherent states
-        # else:
-        state = qutip.coherent_dm(N, alpha) # single coherent state
-        x_vec = np.linspace(-10, 10, 61)
+        # single coherent state
+        state = qutip.coherent_dm(N, alpha/np.sqrt(2))
+        x_vec = np.linspace(-12, 12, 121)
         W_func = qutip.wigner(state, x_vec, x_vec)
         # Plot wigner function
-        fig, ax = plt.subplots(figsize=(3.5, 3.5), dpi=100)
-        x_volt = 2*V_zpf*x_vec
+        fig, ax = plt.subplots(figsize=(3.5, 3.5))
         ax.pcolormesh(x_vec, x_vec, W_func, cmap='Blues', shading='nearest')
         ax.grid(ls='--', lw=1, color='gray', alpha=.25)
         ax.set_ylabel('$Y$ Quadrature')
         ax.set_xlabel('$X$ Quadrature')
         ax.set_title(f'Quantum voltage at node {node_idx}')
-        ax.plot(np.real(alpha), np.imag(alpha), 'C3x' )
         ax.annotate('', xy=(np.real(alpha), np.imag(alpha)), xytext=(0, 0),
                     arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
         # Vzpf axes
         ax_vy = ax.twinx()
         ax_vx = ax.twiny()
-        ax_vy.set_ylabel('Voltage Q ($\\mathrm{{\\mu}}$V)')
-        ax_vy.set_ylim([l*2*V_zpf*1e6 for l in ax.get_ylim()])
-        ax_vx.set_xlabel('Voltage I ($\\mathrm{{\\mu}}$V)')
-        ax_vx.set_xlim([l*2*V_zpf*1e6 for l in ax.get_xlim()])
-        # ax_vx.axvline(V_zpf*1e6, color='C0', ls='--')
-        # # ax_vy.axhline(np.imag(v_node*1e6), color='C3', ls='--')
+        ax_vy.set_ylim([l*V_zpf for l in ax.get_ylim()])
+        ax_vx.set_xlim([l*V_zpf for l in ax.get_xlim()])
+        set_ylabel(ax_vy, 'Voltage Q', 'V')
+        set_xlabel(ax_vx, 'Voltage I', 'V')
+        # bandwidth = 2.4e9
+        # frequency = np.linspace(-bandwidth/2, bandwidth/2, 101)+in_freq
+        # PSD = PSD_quantum(frequency, self.Zgen)
+        # v_noise = self._generate_thermal_noise_ensemble(frequency=frequency, PSD=PSD, shots=1e5)
+        # v_thermal = v_noise + v_node
+        # heatmap, xedges, yedges = np.histogram2d(np.real(v_thermal), np.imag(v_thermal), bins=21,)
+        # fig, ax = plt.subplots(figsize=(3.5, 3.5))
+        # ax.pcolormesh(xedges, yedges, heatmap, cmap='Blues')
+        # ax.set_ylim(ax_vy.get_ylim())
+        # ax.set_xlim(ax_vx.get_xlim())
+        # ax.annotate('', xy=(np.real(v_node), np.imag(v_node)), xytext=(0, 0),
+        #             arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
+        # ax.grid(ls='--', lw=1, color='gray', alpha=.25)
+        # set_ylabel(ax, 'Voltage Q', 'V')
+        # set_xlabel(ax, 'Voltage I', 'V')
+        # fig, ax = plt.subplots(figsize=(3.5, 3.5))
         # ax_vx.axvline(np.real(v_node*1e6), color='C3', ls='--')
         # ax_vy.axhline(np.imag(v_node*1e6), color='C3', ls='--')
+        # get thermal voltages ensemble
+        # V_func = np.random.multivariate_normal((np.real(v_node), np.imag(v_node)), np.array([[V_zpf,0], [0, V_zpf]]), 10000)
+        # x_volt = x_vec*V_zpf
+        # ax.pcolormesh(x_volt, x_volt, W_func, cmap='Blues', shading='nearest')
+        # set_ylabel(ax, 'Voltage Q', 'V')
+        # set_xlabel(ax, 'Voltage I', 'V')
 
     def find_resonance_parameters(self, frequency_bounds: tuple):
         '''
@@ -625,7 +691,7 @@ class Network():
         '''
         Draw schematic of network.
         '''
-        fig, ax = plt.subplots(figsize=(1,1), dpi=100)
+        fig, ax = plt.subplots(figsize=(1,1))
         ax.set_xlim(0, .9)
         ax.set_ylim(-.45, .45)
         ax.axis('off')
@@ -687,8 +753,8 @@ class Network():
         # final node
         ax.plot([x_j], [0], color='k', marker='o', markersize=10, clip_on=False)
         ax.text(x_j, .3, f'{i+1}', size=12, va='center', ha='center')
-        plt.show()
-
+        self.fig = fig
+        # plt.show()
 
 ##############################################
 # Plotting helper functions
@@ -833,10 +899,10 @@ def set_aspect_ratio_lim(axis, ratio_x, ratio_y):
     axis.set_xlim(xlim_new)
     axis.set_ylim(ylim_new)
 
-def move_subplot(ax, dx: float = 0, dy: float = 0):
+def move_subplot(ax, dx: float = 0, dy: float = 0, scale_x: float = 1, scale_y: float = 1):
     '''
     Move subplot by dx and dy
     '''
     pos = ax.get_position()
-    pos = [pos.x0+dx*pos.width, pos.y0+dy*pos.height, pos.width, pos.height]
+    pos = [pos.x0+dx*pos.width*scale_x, pos.y0+dy*pos.height*scale_y, pos.width*scale_x, pos.height*scale_y]
     ax.set_position(pos)
