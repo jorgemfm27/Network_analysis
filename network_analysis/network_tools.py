@@ -18,6 +18,12 @@ def Z_inductor(Freq: np.array, L: float):
     Z_in = 1j*w*L
     return Z_in
 
+def Z_resistor(Freq: np.array, R: float):
+    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    w = 2*np.pi*Freq
+    Z_in = np.ones(w.shape, dtype=np.complex_)*R
+    return Z_in
+
 def Z_term_transline(Freq: np.array, l: float, v: float, Z0: float, ZL: float = 0):
     assert len(Freq.shape), 'Frequency should be given as 1D array'
     beta = 2*np.pi*Freq/v
@@ -222,7 +228,6 @@ def PSD_quantum(f, Z0):
     PSD = np.ones(f.shape)*2*V_zpf**2/Z0/bandwidth
     return PSD
 
-
 def Vp_from_PdBm(P_dBm, R=50):
     '''
     Convert power in dBm to voltage peak.
@@ -233,7 +238,7 @@ class Network():
     '''
     Class used to construct and model a 2 port network.
     Network can be built using add_<component> methods.
-    The self.draw_network() method plots a schematic of the network bult.
+    The self.draw_network() method plots a schematic of the network built.
     '''
     def __init__(self, Zgen: float):
         # Elements along network
@@ -254,7 +259,7 @@ class Network():
             element_idx = len(self.elements)-1
             self.element_properties[element_idx] = properties
 
-    def _substitute_element(self, M_function, name, element_idx, properties=None):
+    def _substitute_element(self, M_function, element_idx, name, properties=None):
         '''
         Substitute an ABCD matrix element in existing network.
         M_function should have a frequency argument.
@@ -303,6 +308,26 @@ class Network():
         else:
             self._substitute_element(M_L, element_idx, name=f'inductor_{element_type}')
 
+    def add_resistor(self, R: float, element_type: str, element_idx=None):
+        '''
+        Add a resistor element to the network.
+        Can be made in series or in parallel.
+        '''
+        # Assertion
+        assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
+        # add a series capacitance element to network
+        if element_type == 'series':
+            Z = lambda frequency: Z_resistor(Freq=frequency, R=R)
+            M_C = lambda frequency: M_series_impedance(Z=Z(frequency))
+        else:
+            Z = lambda frequency: Z_resistor(Freq=frequency, R=R)
+            M_C = lambda frequency: M_parallel_impedance(Z=Z(frequency))
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_C, name=f'resistor_{element_type}')
+        else:
+            self._substitute_element(M_C, element_idx, name=f'resistor_{element_type}')
+
     def add_transmission_line(self, length: float, Z0: float, phase_velocity: float, element_idx=None):
         '''
         Add a series transmission line element to network.
@@ -314,6 +339,17 @@ class Network():
         else:
             self._substitute_element(M_t, element_idx, name='transmission_line')
 
+    def add_parallel_transmission_line(self, length: float, Z0: float, phase_velocity: float, Z_load: float, element_idx=None):
+        '''
+        Add a parallel transmission line element to network.
+        '''
+        M_t = lambda frequency: M_parallel_impedance(Z_term_transline(frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_load))
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_t, name='parallel_transmission_line', properties={'Z_load': Z_load})
+        else:
+            self._substitute_element(M_t, element_idx, name='parallel_transmission_line', properties={'Z_load': Z_load})
+
     def add_attenuator(self, attn_dB: float, Z0: float, temperature_K: float, element_idx=None):
         '''
         Add a series attenuator element to network.
@@ -323,7 +359,7 @@ class Network():
         if element_idx is None:
             self._add_element(M_a, name='attenuator', properties={'attn_dB': attn_dB, 'temperature_K': temperature_K})
         else:
-            self._substitute_element(M_a, element_idx, name=f'attenuator_{attn_dB:.0f}')
+            self._substitute_element(M_a, element_idx, name=f'attenuator_{attn_dB:.0f}', properties={'attn_dB': attn_dB, 'temperature_K': temperature_K})
 
     def add_amplifier(self, gain_dB: float, temperature_K: float, Z0: float, element_idx=None):
         '''
@@ -388,7 +424,7 @@ class Network():
         S11, S12, S21, S22 = extract_S_pars(M_system, Zgen=self.Zgen)
         # plot parameters
         if plot:
-            fig, axs = plt.subplots(figsize=(6,3), ncols=2, nrows=2, sharex='col', sharey='row')
+            fig, axs = plt.subplots(figsize=(8,4), ncols=2, nrows=2, sharex='col', sharey='row')
             for ax, s_param, name in zip(axs.flatten(), [S11, S12, S21, S22], ['S_{11}', 'S_{12}', 'S_{21}', 'S_{22}']):
                 ax.plot(frequency, np.abs(s_param))
                 if name in ['S_{21}', 'S_{22}']:
@@ -397,7 +433,7 @@ class Network():
             fig.suptitle('Scattering parameters')
         return S11, S12, S21, S22
 
-    def get_Z_parameters(self, frequency):
+    def get_Z_parameters(self, frequency, Z_load: float = None):
         '''
         Compute the Z parameters of the network
         over a frequency range.
@@ -414,7 +450,10 @@ class Network():
         # Multiply all ABCD matrices
         M_system = multiply_matrices([*M_elements])
         # Compute scattering parameters
-        Z11, Z12, Z21, Z22, Zin, Zout = extract_Z_pars(M_system, ZL=self.Zgen)
+        # (Z_load here is used to estimate input and output impedances)
+        if Z_load is None:
+            Z_load = self.Zgen
+        Z11, Z12, Z21, Z22, Zin, Zout = extract_Z_pars(M_system, ZL=Z_load)
         return Z11, Z12, Z21, Z22, Zin, Zout
 
     def get_signal_response(self, time, signal):
@@ -438,23 +477,27 @@ class Network():
         time, signal_22 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_22)
         return time, signal_11, signal_12, signal_21, signal_22
 
-    def get_node_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0):
+    def get_node_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0, Z_load : float = None):
         '''
-        Compute the voltage and current at a given node of the network for a given input field.
+        Compute the voltage and current at a given node of the network for a given input field,
+        on port 0 and a load impedance Z_load.
         Args:
             node_idx : node of circuit.
-            in_freq  : input signal frequency.
+            in_freq  : input signal frequency (Hz).
             in_amp   : input signal amplitude (V).
             in_phase : input signal phase (deg).
+            Z_load   : load impedance on ouput port (Ohm).
         '''
         assert node_idx < len(self.elements)+1, f'Network contains only {len(self.elements)+1} nodes.'
+        if Z_load is None:
+            Z_load = self.Zgen
         # convert frequency into array
         if isinstance(in_freq, float):
             in_freq = np.array([in_freq])
         # compute voltage and current at input node 0
         v0 = in_amp*np.exp(1j*in_phase*np.pi/180)*np.ones(in_freq.shape)
         # input current obtained from input impedance
-        z11, z12, z21, z22, zin, zout = self.get_Z_parameters(frequency=in_freq)
+        z11, z12, z21, z22, zin, zout = self.get_Z_parameters(frequency=in_freq, Z_load=Z_load)
         i0 = v0/(zin)
         A_0 = np.array([v0, i0]).T
         # compute voltage and current at node_idx
@@ -481,13 +524,15 @@ class Network():
         # Quantum coherent state fluctuations
         PSD_Q = PSD_quantum(frequency, self.Zgen)
         if plot:
-            fig, ax = plt.subplots(figsize=(4, 4))
+            fig, ax = plt.subplots(figsize=(4, 6))
+            norm = matplotlib.colors.Normalize(vmin=0, vmax=node_idx)
+            cmap = matplotlib.colormaps['plasma']
             ax.set_xscale('log')
             ax.set_yscale('log')
             ax.set_xlabel('frequency (Hz)')
             ax.set_ylabel('PSD ($\\mathrm{{\\:J\\:Hz^{-1}}}$)')
             ax.set_title(f'Cumulative PSD at node {node_idx}')
-            ax.plot(frequency, PSD, label=f'node 0 ({quantity_to_string(300, "K")})', color=f'teal')
+            ax.plot(frequency, PSD, label=f'node 0 ({quantity_to_string(300, "K")})', color=cmap(norm(0)))
         # Loop through all nodes up to the selected node
         for idx, (element, _) in enumerate(self.elements[:node_idx]):
             _node_idx = idx+1
@@ -499,8 +544,8 @@ class Network():
                 PSD = (1-attn)*PSD_thermal(frequency, temperature_K) + attn*PSD
                 # plot current PSD
                 if plot:
-                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=f'C{idx}')
-                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=f'C{idx}', ls='--', autoscale=False)
+                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=cmap(norm(_node_idx)))
+                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=cmap(norm(_node_idx)), ls='--', autoscale=False)
             elif element == 'amplifier':
                 temperature_K = self.element_properties[idx]['temperature_K']
                 gain_dB = self.element_properties[idx]['gain_dB']
@@ -511,8 +556,8 @@ class Network():
                 PSD = PSD_thermal(frequency, temperature_K) + gain*PSD
                 # plot current PSD
                 if plot:
-                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=f'C{idx}')
-                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=f'C{idx}', ls='--', autoscale=False)
+                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=cmap(norm(_node_idx)))
+                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=cmap(norm(_node_idx)), ls='--', autoscale=False)
         if plot:
             ax.legend(frameon=False, loc=2, bbox_to_anchor=(1, 1))
         if add_quantum_noise:
@@ -683,7 +728,7 @@ class Network():
             return np.log(1/np.abs(s21))
         # run minimizer
         initial_guess = [f0, 1e6]
-        bounds = [frequency_bounds, (-50e6, +50e6)]
+        bounds = [frequency_bounds, (-5e6, +5e6)]
         _, k0 = minimize(cost_func, x0=initial_guess, options={'disp':False}, bounds=bounds, method='Powell').x
         return f0, k0
 
@@ -715,9 +760,31 @@ class Network():
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
                 cd.plot_inductor(xij, 0, xij, -1.2, w_ind=.2, lpad=.25)
                 cd.plot_ground(xij, -1., .2, horizontal=False)
-            # plot transmissionline
+            # plot resistor in series
+            elif name == 'resistor_series':
+                cd.plot_resistor(x_i, 0, x_j, 0, w_ind=-.3, lpad=.3)
+            # plot inductor in parallel
+            elif name == 'resistor_parallel':
+                ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
+                cd.plot_resistor(xij, 0, xij, -1.2, w_ind=.3, lpad=.3)
+                cd.plot_ground(xij, -1., .2, horizontal=False)
+            # plot transmission line
             elif name == 'transmission_line':
                 cd.plot_transmission_line(x_i+.05, 0, 1.2, horizontal=True, radius=.2)
+            # plot parallel transmission line
+            elif name == 'parallel_transmission_line':
+                ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
+                cd.plot_ground(xij, -1.1, .1, horizontal=False)
+                Z_load = self.element_properties[i]['Z_load']
+                if Z_load == 0:
+                    cd.plot_transmission_line(xij, 0, .9+.2, horizontal=False, radius=.2)
+                elif np.abs(Z_load) > 1e5:
+                    cd.plot_transmission_line(xij, 0, .8, horizontal=False, radius=.2)
+                    ax.plot([xij, xij], [-.8, -1.05], color='k', ls='None', marker='o', linewidth=4, clip_on=False)
+                else:
+                    cd.plot_transmission_line(xij, 0, .7, horizontal=False, radius=.2)
+                    cd.plot_resistor(x0=xij, y0=-.7, x1=xij, y1=-1.1, w_ind=.2)
+                # cd.plot_capacitor(xij, 0, xij, -.35, l_cap=.1, cap_dist=.12)
             # plot capacitively coupled resonator
             elif name == 'cap_resonator':
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
