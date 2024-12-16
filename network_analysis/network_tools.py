@@ -4,6 +4,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import qutip
 from scipy.optimize import minimize
+from scipy import constants
 
 
 def Z_capacitor(Freq: np.array, C: float):
@@ -204,8 +205,8 @@ def PSD_thermal(f, T):
     Args:
         T  : temperature in Kelvin.
     '''
-    h = 6.62607015e-34
-    kB = 1.380649e-23
+    h = constants.h
+    kB = constants.Boltzmann
     # Bose-Einstein distribution
     eta = (h*f/(kB*T))/(np.exp(h*f/(kB*T))-1)
     # power spectral density
@@ -219,8 +220,8 @@ def PSD_quantum(f, Z0):
         Z0 : Impedance of system.
     '''
     # calculate vacuum state fluctuations of voltage
-    h = 6.62607015e-34
-    e = 1.602176634e-19
+    h = constants.h
+    e = constants.e
     Phi_0 = h/(2*e)  # flux quantum
     R_Q = h/(4*e**2) # resistance quantum
     V_zpf = (2*np.pi*np.mean(f))*Phi_0*np.sqrt(Z0/(R_Q*4*np.pi))
@@ -234,6 +235,41 @@ def Vp_from_PdBm(P_dBm, R=50):
     '''
     return np.sqrt(R*10**(P_dBm/10-3))
 
+def S_vv(f, Zin, T: float):
+    '''
+    Spectral density of squared voltage 
+    (used for Fermi's golden rule).
+    Args:
+        f   : frequency, should be given as array.
+        Zin : input impedance, should be given as array.
+        T   : Temperature, should be a float.
+    '''
+    assert f.shape == Zin.shape, 'frequency array must have same dimensions as input impedance.'
+    h = constants.h
+    kB = constants.Boltzmann
+    Re_Zin = np.real(Zin)
+    s_vv = h*f*Re_Zin*(1+1/np.tanh(h*f/(2*kB*T)))
+    return s_vv
+
+def S_ii(f, Zin, T: float):
+    '''
+    Spectral density of squared current 
+    (used for Fermi's golden rule).
+    Args:
+        f   : frequency, should be given as array.
+        Zin : input impedance, should be given as array.
+        T   : Temperature, should be a float.
+    '''
+    assert f.shape == Zin.shape, 'frequency array must have same dimensions as input impedance.'
+    h = constants.h
+    kB = constants.Boltzmann
+    Re_Yin = np.real(1/Yin)
+    s_ii = h*f*Re_Zin*(1+1/np.tanh(h*f/(2*kB*T)))
+    return s_ii
+
+##############################################
+# Main class
+##############################################
 class Network():
     '''
     Class used to construct and model a 2 port network.
@@ -284,9 +320,9 @@ class Network():
             M_C = lambda frequency: M_parallel_impedance(Z=Z(frequency))
         # if element already exists
         if element_idx is None:
-            self._add_element(M_C, name=f'capacitor_{element_type}')
+            self._add_element(M_C, name=f'capacitor_{element_type}', properties={'capacitance': C})
         else:
-            self._substitute_element(M_C, element_idx, name=f'capacitor_{element_type}')
+            self._substitute_element(M_C, element_idx, name=f'capacitor_{element_type}', properties={'capacitance': C})
 
     def add_inductance(self, L: float, element_type: str, element_idx=None):
         '''
@@ -304,9 +340,9 @@ class Network():
             M_L = lambda frequency: M_parallel_impedance(Z=Z(frequency))
         # if element already exists
         if element_idx is None:
-            self._add_element(M_L, name=f'inductor_{element_type}')
+            self._add_element(M_L, name=f'inductor_{element_type}', properties={'inductance': L})
         else:
-            self._substitute_element(M_L, element_idx, name=f'inductor_{element_type}')
+            self._substitute_element(M_L, element_idx, name=f'inductor_{element_type}', properties={'inductance': L})
 
     def add_resistor(self, R: float, element_type: str, element_idx=None):
         '''
@@ -324,9 +360,9 @@ class Network():
             M_C = lambda frequency: M_parallel_impedance(Z=Z(frequency))
         # if element already exists
         if element_idx is None:
-            self._add_element(M_C, name=f'resistor_{element_type}')
+            self._add_element(M_C, name=f'resistor_{element_type}', properties={'resistance': R})
         else:
-            self._substitute_element(M_C, element_idx, name=f'resistor_{element_type}')
+            self._substitute_element(M_C, element_idx, name=f'resistor_{element_type}', properties={'resistance': R})
 
     def add_transmission_line(self, length: float, Z0: float, phase_velocity: float, element_idx=None):
         '''
@@ -335,9 +371,9 @@ class Network():
         M_t = lambda frequency: M_series_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0)
         # if element already exists
         if element_idx is None:
-            self._add_element(M_t, name='transmission_line')
+            self._add_element(M_t, name='transmission_line', properties={'length': length})
         else:
-            self._substitute_element(M_t, element_idx, name='transmission_line')
+            self._substitute_element(M_t, element_idx, name='transmission_line', properties={'length': length})
 
     def add_parallel_transmission_line(self, length: float, Z0: float, phase_velocity: float, Z_load: float, element_idx=None):
         '''
@@ -346,9 +382,9 @@ class Network():
         M_t = lambda frequency: M_parallel_impedance(Z_term_transline(frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_load))
         # if element already exists
         if element_idx is None:
-            self._add_element(M_t, name='parallel_transmission_line', properties={'Z_load': Z_load})
+            self._add_element(M_t, name='parallel_transmission_line', properties={'Z_load': Z_load, 'length': length})
         else:
-            self._substitute_element(M_t, element_idx, name='parallel_transmission_line', properties={'Z_load': Z_load})
+            self._substitute_element(M_t, element_idx, name='parallel_transmission_line', properties={'Z_load': Z_load, 'length': length})
 
     def add_attenuator(self, attn_dB: float, Z0: float, temperature_K: float, element_idx=None):
         '''
@@ -647,8 +683,8 @@ class Network():
         z_node = self.Zgen
         assert (type(v_node) is complex) or (type(v_node) is np.complex128)
         # calculate vacuum state fluctuations of voltage
-        h = 6.62607015e-34
-        e = 1.602176634e-19
+        h = constants.h
+        e = constants.e
         Phi_0 = h/(2*e)  # flux quantum
         R_Q = h/(4*e**2) # resistance quantum
         V_zpf = (2*np.pi*in_freq)*Phi_0*np.sqrt(z_node/(R_Q*4*np.pi))
@@ -746,35 +782,51 @@ class Network():
             xij = np.mean([x_i, x_j])
             # plot capacitor in series
             if name == 'capacitor_series':
+                capacitance = self.element_properties[i]['capacitance']
                 cd.plot_capacitor(x_i, 0, x_j, 0, l_cap=.2, cap_dist=.2)
+                ax.text(xij, +.5, quantity_to_string(capacitance, 'F'), va='center', ha='center', color='gray')
             # plot capacitor in parallel
             elif name == 'capacitor_parallel':
+                capacitance = self.element_properties[i]['capacitance']
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
                 cd.plot_capacitor(xij, 0, xij, -1.2, l_cap=.2, cap_dist=.2)
                 cd.plot_ground(xij, -1., .2, horizontal=False)
+                ax.text(xij-.3, -.6, quantity_to_string(capacitance, 'F'), va='center', ha='right', color='gray')
             # plot inductor in series
             elif name == 'inductor_series':
+                inductance = self.element_properties[i]['inductance']
                 cd.plot_inductor(x_i, 0, x_j, 0, w_ind=.2, lpad=.25)
+                ax.text(xij, +.5, quantity_to_string(inductance, 'H'), va='center', ha='center', color='gray')
             # plot inductor in parallel
             elif name == 'inductor_parallel':
+                inductance = self.element_properties[i]['inductance']
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
                 cd.plot_inductor(xij, 0, xij, -1.2, w_ind=.2, lpad=.25)
                 cd.plot_ground(xij, -1., .2, horizontal=False)
+                ax.text(xij-.3, -.6, quantity_to_string(inductance, 'H'), va='center', ha='right', color='gray')
             # plot resistor in series
             elif name == 'resistor_series':
+                resistance = self.element_properties[i]['resistance']
                 cd.plot_resistor(x_i, 0, x_j, 0, w_ind=-.3, lpad=.3)
+                ax.text(xij, +.5, quantity_to_string(resistance, '$\Omega$'), va='center', ha='center', color='gray')
             # plot inductor in parallel
             elif name == 'resistor_parallel':
+                resistance = self.element_properties[i]['resistance']
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
                 cd.plot_resistor(xij, 0, xij, -1.2, w_ind=.3, lpad=.3)
                 cd.plot_ground(xij, -1., .2, horizontal=False)
+                ax.text(xij-.3, -.6, quantity_to_string(resistance, '$\Omega$'), va='center', ha='right', color='gray')
             # plot transmission line
             elif name == 'transmission_line':
+                length = self.element_properties[i]['length']
                 cd.plot_transmission_line(x_i+.05, 0, 1.2, horizontal=True, radius=.2)
+                ax.text(xij, +.5, quantity_to_string(length, 'm', decimal_place=2), va='center', ha='center', color='gray')
             # plot parallel transmission line
             elif name == 'parallel_transmission_line':
+                length = self.element_properties[i]['length']
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
                 cd.plot_ground(xij, -1.1, .1, horizontal=False)
+                ax.text(xij-.3, -.6, quantity_to_string(length, 'm', decimal_place=2), va='center', ha='right', color='gray')
                 Z_load = self.element_properties[i]['Z_load']
                 if Z_load == 0:
                     cd.plot_transmission_line(xij, 0, .9+.2, horizontal=False, radius=.2)
@@ -828,7 +880,7 @@ class Network():
 ##############################################
 SI_PREFIXES = dict(zip(range(-24, 25, 3), 'yzafpnμm kMGTPEZY'))
 SI_PREFIXES[0] = ""
-SI_UNITS = ',m,s,g,W,J,V,A,F,T,Hz,Ohm,S,N,C,px,b,B,K,Bar,Vpeak,Vpp,Vp,Vrms,$\Phi_0$,A/s'.split(
+SI_UNITS = ',m,s,g,W,J,V,A,F,T,Hz,$\Omega$,S,N,C,px,b,B,K,Bar,Vpeak,Vpp,Vp,Vrms,$\Phi_0$,A/s'.split(
     ',')
 def SI_prefix_and_scale_factor(val, unit=None):
     """
@@ -857,7 +909,7 @@ def SI_prefix_and_scale_factor(val, unit=None):
 
     return 1, unit if unit is not None else ""
 
-def quantity_to_string(val, unit, error=None, decimal_place=0):
+def quantity_to_string(val, unit, error=None, decimal_place=2):
     scale_factor, prefix = SI_prefix_and_scale_factor(val, unit)
     scaled_val = val*scale_factor
     if error: # write number with uncertainty
@@ -880,7 +932,7 @@ def quantity_to_string(val, unit, error=None, decimal_place=0):
             decimal_place = 0
             quantity_str = '{:.{}f} {}'.format(scaled_val, decimal_place, prefix)
     else:
-        quantity_str = '{:.{}f} {}'.format(scaled_val, decimal_place, prefix)
+        quantity_str = '{:.{}g} {}'.format(scaled_val, decimal_place+1, prefix)
     return quantity_str
 
 def set_xlabel(axis, label, unit=None, latexify_ticks=False, **kw):
