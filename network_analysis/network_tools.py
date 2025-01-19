@@ -1,4 +1,5 @@
 from . import circuit_design as cd
+import os
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -201,7 +202,7 @@ def _solve_nan(array):
 
 def PSD_thermal(f, T):
     '''
-    Power spectral density at temperature T in units J/Hz.
+    Power spectral density at temperature T in units W/Hz.
     Args:
         T  : temperature in Kelvin.
     '''
@@ -304,6 +305,9 @@ class Network():
         if properties:
             self.element_properties[element_idx] = properties
 
+    #################################################
+    # Elements types of network
+    #################################################
     def add_capacitance(self, C: float, element_type: str, element_idx=None):
         '''
         Add a capacitive element to the network.
@@ -440,6 +444,75 @@ class Network():
         else:
             self._substitute_element(M_t, element_idx, name='ind_resonator')
 
+    def add_commercial_component(self, name: str, temperature_K: float, element_idx=None, plot_params: bool = False):
+        '''
+        Add a component from S matrix data available.
+        '''
+        component_data_file = os.path.abspath(os.path.join(__file__, '..', 'circuit_components', f'{name}.s2p'))
+        # try:
+        data = parse_s2p(component_data_file)
+
+        if data['param_type'].lower() == 's':
+            freq = np.array(data['frequency'])
+            S11 = np.array(data['11'])
+            # S12 = np.array(data['12']) # to avoid numerical instabilities
+            S12 = np.array(data['21'])
+            S21 = np.array(data['21'])
+            S22 = np.array(data['22'])
+            Z0 = float(data['char_imp'])
+            # convert s params to ABCD params
+            _A =        ((1 + S11)*(1 - S22) + S12*S21 )/(2*S21)
+            _B =   Z0 * ((1 + S11)*(1 + S22) - S12*S21 )/(2*S21)
+            _C = 1/Z0 * ((1 - S11)*(1 - S22) - S12*S21 )/(2*S21)
+            _D =        ((1 - S11)*(1 + S22) + S12*S21 )/(2*S21)
+            if plot_params:
+                fig, axs = plt.subplots(figsize=(8, 5),ncols=2, nrows=2, sharex='col')
+                # plot S params mag
+                axs = axs.flatten()
+                axs[0].plot(freq, np.abs(S11), color='C0', alpha=1, ls='-', zorder=+1)
+                axs[1].plot(freq, np.abs(S12), color='C0', alpha=1, ls='-', zorder=+1)
+                axs[2].plot(freq, np.abs(S21), color='C0', alpha=1, ls='-', zorder=+1)
+                axs[3].plot(freq, np.abs(S22), color='C0', alpha=1, ls='-', zorder=+1)
+                # # plot S params phase
+                # axt = [ax.twinx() for ax in axs]
+                # axt[0].plot(freq, np.angle(S11), color='C1', alpha=.5, ls='--', zorder=-1)
+                # axt[1].plot(freq, np.angle(S12), color='C1', alpha=.5, ls='--', zorder=-1)
+                # axt[2].plot(freq, np.angle(S21), color='C1', alpha=.5, ls='--', zorder=-1)
+                # axt[3].plot(freq, np.angle(S22), color='C1', alpha=.5, ls='--', zorder=-1)
+                set_xlabel(axs[2], 'frequency', unit='Hz')
+                set_xlabel(axs[3], 'frequency', unit='Hz')
+
+        # Assemble M matrix function
+        def M_CC(frequency):
+            # interpolate for different frequency values
+            from scipy.interpolate import interp1d
+            A = interp1d(freq, _A, kind='linear')
+            B = interp1d(freq, _B, kind='linear')
+            C = interp1d(freq, _C, kind='linear')
+            D = interp1d(freq, _D, kind='linear')
+            # assemble matrix
+            if True:
+                # deal with negative frequencies
+                _frequency = np.abs(frequency)
+                return np.moveaxis(np.array([[A(_frequency), B(_frequency)],
+                                             [C(_frequency), D(_frequency)]]), -1, 0)
+            else:
+                raise ValueError('frequency out of component range!')
+        # if element already exists
+        element_type = next((line for line in data["metadata"] if "type" in line.lower()), 'unknown commercial component')
+        model = next((line for line in data["metadata"] if "model" in line.lower()), 'unknown commercial component').split(' ')[1]
+        if element_idx is None:
+            self._add_element(M_CC, name='commercial_component', properties={'type':element_type, 
+                                                                             'model': model, 
+                                                                             'temperature_K': temperature_K})
+        else:
+            self._substitute_element(M_CC, element_idx, name='commercial_component', properties={'type':element_type, 
+                                                                                                 'model': model,
+                                                                                                 'temperature_K': temperature_K})
+
+    #################################################
+    # Methods for properties/behaviors of network
+    #################################################
     def get_S_parameters(self, frequency, plot: bool = False):
         '''
         Compute the S parameters of the network
@@ -460,7 +533,7 @@ class Network():
         S11, S12, S21, S22 = extract_S_pars(M_system, Zgen=self.Zgen)
         # plot parameters
         if plot:
-            fig, axs = plt.subplots(figsize=(8,4), ncols=2, nrows=2, sharex='col', sharey='row')
+            fig, axs = plt.subplots(figsize=(8,4), ncols=2, nrows=2, sharex='col')#, sharey='row')
             for ax, s_param, name in zip(axs.flatten(), [S11, S12, S21, S22], ['S_{11}', 'S_{12}', 'S_{21}', 'S_{22}']):
                 ax.plot(frequency, np.abs(s_param))
                 if name in ['S_{21}', 'S_{22}']:
@@ -516,7 +589,7 @@ class Network():
     def get_node_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0, Z_load : float = None):
         '''
         Compute the voltage and current at a given node of the network for a given input field,
-        on port 0 and a load impedance Z_load.
+        on port 0 and a load impedance <Z_load> on the output port.
         Args:
             node_idx : node of circuit.
             in_freq  : input signal frequency (Hz).
@@ -547,13 +620,12 @@ class Network():
         M_system = np.array([np.linalg.inv(m) for m in M_system])
         # get node voltage and current
         A_node = np.einsum('nij,nj->ni', M_system, A_0)
-        # print(A_0, M_system[0], np.dot(M_system[0], A_0[0]))
         vnode, inode = A_node[:,0], A_node[:,1]
         return vnode, inode
 
     def get_psd_at_node(self, node_idx: int, frequency: list, plot: bool = False, add_quantum_noise: bool = False):
         '''
-        Calculate the cascaded psd from all finite temperature elements in the network
+        Calculate the cascaded psd from all finite temperature elements in the network.
         '''
         # Start with a 300 K PSD
         PSD = PSD_thermal(frequency, T=300)
@@ -566,9 +638,18 @@ class Network():
             ax.set_xscale('log')
             ax.set_yscale('log')
             ax.set_xlabel('frequency (Hz)')
-            ax.set_ylabel('PSD ($\\mathrm{{\\:J\\:Hz^{-1}}}$)')
+            ax.set_ylabel('PSD ($\\mathrm{{\\:W\\:Hz^{-1}}}$)')
             ax.set_title(f'Cumulative PSD at node {node_idx}')
             ax.plot(frequency, PSD, label=f'node 0 ({quantity_to_string(300, "K")})', color=cmap(norm(0)))
+            # add temperature axis
+            axt = ax.twinx()
+            axt.set_yscale('log')
+            set_ylabel(axt, 'Temperature (K)')
+            def _update_temperature_axis():
+                _range = ax.get_ylim()
+                kB = constants.Boltzmann
+                temp_range = [val/(4*kB) for val in _range]
+                axt.set_ylim(temp_range)
         # Loop through all nodes up to the selected node
         for idx, (element, _) in enumerate(self.elements[:node_idx]):
             _node_idx = idx+1
@@ -578,10 +659,6 @@ class Network():
                 attn = 10**(-attn_dB/10) # here we should compute attenuation in power
                 # cascaded attenuation
                 PSD = (1-attn)*PSD_thermal(frequency, temperature_K) + attn*PSD
-                # plot current PSD
-                if plot:
-                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=cmap(norm(_node_idx)))
-                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=cmap(norm(_node_idx)), ls='--', autoscale=False)
             elif element == 'amplifier':
                 temperature_K = self.element_properties[idx]['temperature_K']
                 gain_dB = self.element_properties[idx]['gain_dB']
@@ -590,12 +667,18 @@ class Network():
                 if add_quantum_noise:
                     PSD += PSD_Q
                 PSD = PSD_thermal(frequency, temperature_K) + gain*PSD
-                # plot current PSD
-                if plot:
-                    ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=cmap(norm(_node_idx)))
-                    # ax.plot(frequency, (1-attn)*PSD_thermal(frequency, temperature_K), color=cmap(norm(_node_idx)), ls='--', autoscale=False)
+            elif element == 'commercial_component':
+                temperature_K = self.element_properties[idx]['temperature_K']
+                # Get attenuation of component versus frequency
+                _, _, s21, _ = extract_S_pars(self.elements[idx][1](frequency), Zgen=self.Zgen)
+                attn = np.abs(s21)**2
+                PSD = PSD_thermal(frequency, temperature_K) + attn*PSD
+            # plot current PSD
+            if plot:
+                ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=cmap(norm(_node_idx)))
         if plot:
-            ax.legend(frameon=False, loc=2, bbox_to_anchor=(1, 1))
+            ax.legend(frameon=False, loc=2, bbox_to_anchor=(1.2, 1))
+            _update_temperature_axis()
         if add_quantum_noise:
             return PSD + PSD_Q
         else:
@@ -768,6 +851,9 @@ class Network():
         _, k0 = minimize(cost_func, x0=initial_guess, options={'disp':False}, bounds=bounds, method='Powell').x
         return f0, k0
 
+    #################################################
+    # Plot network
+    #################################################
     def draw_network(self):
         '''
         Draw schematic of network.
@@ -863,6 +949,21 @@ class Network():
                 cd.plot_amplifier(xij, 0, h=.7, l=.7, gain_dB=gain_dB)
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
                 ax.text(xij, -.5, quantity_to_string(temperature_K, 'K'), va='center', ha='center')
+            # plot commercial component
+            elif 'commercial_component' in name:
+                _type = self.element_properties[i]['type']
+                _model = self.element_properties[i]['model']
+                if 'low pass' in _type.lower():
+                    cd.plot_low_pass(xij, 0, h=.4, l=.8, name=_model)
+                elif 'high pass' in _type.lower():
+                    cd.plot_high_pass(xij, 0, h=.4, l=.8, name=_model)
+                ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
+                try:
+                    temperature_K = self.element_properties[i]['temperature_K']
+                    ax.text(xij, -.5, quantity_to_string(temperature_K, 'K'), va='center', ha='center')
+                except exception as e:
+                    print(e)
+                    print(f'Could not find temperature for component {_type} {_model}!')
             else:
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
                 ax.text(xij, 0, '?', ha='center', va='center')
@@ -880,8 +981,9 @@ class Network():
 ##############################################
 SI_PREFIXES = dict(zip(range(-24, 25, 3), 'yzafpnμm kMGTPEZY'))
 SI_PREFIXES[0] = ""
-SI_UNITS = ',m,s,g,W,J,V,A,F,T,Hz,$\Omega$,S,N,C,px,b,B,K,Bar,Vpeak,Vpp,Vp,Vrms,$\Phi_0$,A/s'.split(
+SI_UNITS = ',m,s,g,W,J,V,A,F,H,T,Hz,$\Omega$,S,N,C,px,b,B,K,Bar,Vpeak,Vpp,Vp,Vrms,$\Phi_0$,A/s'.split(
     ',')
+
 def SI_prefix_and_scale_factor(val, unit=None):
     """
     Takes in a value and unit and if applicable returns the proper
@@ -1025,3 +1127,57 @@ def move_subplot(ax, dx: float = 0, dy: float = 0, scale_x: float = 1, scale_y: 
     pos = ax.get_position()
     pos = [pos.x0+dx*pos.width*scale_x, pos.y0+dy*pos.height*scale_y, pos.width*scale_x, pos.height*scale_y]
     ax.set_position(pos)
+
+def parse_s2p(file_path):
+    """
+    Parse an S2P file into a dictionary with metadata and S-parameter data.
+    Parameters:
+        file_path (str): Path to the S2P file.
+    Returns:
+        dict: A dictionary with the frequency data, S-parameters, and metadata.
+    """
+    s2p_data = {
+        "metadata": [],
+        "frequency": [],
+        "11": [],
+        "12": [],
+        "21": [],
+        "22": []
+    }
+    with open(file_path, "r") as file:
+        lines = file.readlines()
+    for line in lines:
+        line = line.strip()
+        # Skip comments and empty lines
+        if not line or line.startswith("#") or line.startswith("!"):
+            if line.startswith("!"):
+                # Parse metadata from the header
+                s2p_data["metadata"].append(line[1:].strip())
+            if line.startswith("#"):
+                s2p_data['frq_unit'], s2p_data['param_type'], s2p_data['data_format'], _, s2p_data['char_imp'] = line[1:].split()
+            continue
+        # Split numerical data
+        values = list(map(float, line.split()))
+        # Find the key by value
+        scale_factor = 10**next((k for k, v in SI_PREFIXES.items() if v == s2p_data['frq_unit'].split('Hz')[0]), 0)
+        s2p_data["frequency"].append(values[0]*scale_factor)
+        if s2p_data['data_format'].lower() == 'db':
+            s2p_data["11"].append(10**(values[1]/20)*np.exp(1j*np.pi*values[2]/180))
+            s2p_data["21"].append(10**(values[3]/20)*np.exp(1j*np.pi*values[4]/180))
+            s2p_data["12"].append(10**(values[5]/20)*np.exp(1j*np.pi*values[6]/180))
+            s2p_data["22"].append(10**(values[7]/20)*np.exp(1j*np.pi*values[8]/180))
+        elif s2p_data['data_format'].lower() == 'ma':
+            s2p_data["11"].append(values[1]*np.exp(1j*np.pi*values[2]/180))
+            s2p_data["21"].append(values[3]*np.exp(1j*np.pi*values[4]/180))
+            s2p_data["12"].append(values[5]*np.exp(1j*np.pi*values[6]/180))
+            s2p_data["22"].append(values[7]*np.exp(1j*np.pi*values[8]/180))
+        elif s2p_data['data_format'].lower() == 'ri':
+            s2p_data["11"].append(complex(values[1], values[2]))
+            s2p_data["21"].append(complex(values[3], values[4]))
+            s2p_data["12"].append(complex(values[5], values[6]))
+            s2p_data["22"].append(complex(values[7], values[8]))
+    return s2p_data
+
+
+
+# end

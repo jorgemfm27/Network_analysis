@@ -86,14 +86,14 @@ def plot_attenuator(x0, y0, h=.1, l=.3, attn_dB=None, **kwargs):
     # Plot settings
     _plot_args = dict(boxstyle="Round, pad=0.1", 
                       zorder=3,
-                      ec='k', fc=kwargs.get('color', 'w'),
+                      ec='k', fc=kwargs.get('color', '#607D8B'),
                       lw=kwargs.get('lw', 4), clip_on=False)
     # displacement
     rectangle = FancyBboxPatch((x0-l/2, y0-h/2), l, h, **_plot_args)
     # Plot rotated inductor
     ax.add_patch(rectangle)
     # if attn_dB:
-    ax.text(x0, y0, f'{attn_dB:.0f} dB', va='center', ha='center', zorder=3, size=12)
+    ax.text(x0, y0, f'-{attn_dB:.0f} dB', va='center', ha='center', zorder=3, size=12, color='w')
 
 def plot_amplifier(x0, y0, h=.1, l=.3, gain_dB=None, **kwargs):
     '''
@@ -103,14 +103,58 @@ def plot_amplifier(x0, y0, h=.1, l=.3, gain_dB=None, **kwargs):
     ax = plt.gca()
     # Plot settings
     _plot_args = dict(joinstyle='round', zorder=3,
-                      ec='k', fc=kwargs.get('color', 'w'),
+                      ec='k', fc=kwargs.get('color', '#607D8B'),
                       lw=kwargs.get('lw', 4), clip_on=False)
     # displacement
     triangle = Polygon([(x0-l/2, y0-h/2), (x0-l/2, y0+h/2), (x0+l/2, y0)], **_plot_args)
     # Plot rotated inductor
     ax.add_patch(triangle)
     # # if gain_dB:
-    ax.text(x0-l/10, y0, f'{gain_dB} dB', va='center', ha='center', zorder=3, size=9)
+    ax.text(x0-l/10, y0, f'{gain_dB} dB', va='center', ha='center', zorder=3, size=9, color='w')
+
+def plot_low_pass(x0, y0, h=.1, l=.35, name=None, **kwargs):
+    '''
+    Plot low pass filter.
+    '''
+    # get current axis
+    ax = plt.gca()
+    # Plot settings
+    _plot_args = dict(boxstyle="Round, pad=0.1", 
+                      zorder=3,
+                      ec='k', fc=kwargs.get('color', '#607D8B'),
+                      lw=kwargs.get('lw', 4), clip_on=False)
+    # displacement
+    rectangle = FancyBboxPatch((x0-l/2, y0-h/2), l, h, **_plot_args)
+    # Plot rotated inductor
+    ax.add_patch(rectangle)
+    # plot low pass sign
+    _plot_args = dict(color=kwargs.get('color', 'w'), lw=kwargs.get('lw', 2), solid_capstyle='round', clip_on=False, zorder=3)
+    x = [x0-l*.30, x0+l*.10, x0+l*.30]
+    y = [y0+h*.35, y0+h*.35, y0-h*.05]
+    ax.plot(x, y, **_plot_args)
+    ax.text(x0, y0-h*.43, name, va='center', ha='center', zorder=3, size=8, color='w')
+
+def plot_high_pass(x0, y0, h=.1, l=.35, name=None, **kwargs):
+    '''
+    Plot high pass filter.
+    '''
+    # get current axis
+    ax = plt.gca()
+    # Plot settings
+    _plot_args = dict(boxstyle="Round, pad=0.1", 
+                      zorder=3,
+                      ec='k', fc=kwargs.get('color', '#607D8B'),
+                      lw=kwargs.get('lw', 4), clip_on=False)
+    # displacement
+    rectangle = FancyBboxPatch((x0-l/2, y0-h/2), l, h, **_plot_args)
+    # Plot rotated inductor
+    ax.add_patch(rectangle)
+    # plot low pass sign
+    _plot_args = dict(color=kwargs.get('color', 'w'), lw=kwargs.get('lw', 2), solid_capstyle='round', clip_on=False, zorder=3)
+    x = [x0-l*.30, x0-l*.10, x0+l*.30]
+    y = [y0-h*.05, y0+h*.35, y0+h*.35]
+    ax.plot(x, y, **_plot_args)
+    ax.text(x0, y0-h*.43, name, va='center', ha='center', zorder=3, size=8, color='w')
 
 def plot_transmission_line(x, y, l, horizontal=True, radius=.1, **kwargs):
     '''
