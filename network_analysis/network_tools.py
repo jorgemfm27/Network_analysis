@@ -265,7 +265,7 @@ def S_ii(f, Zin, T: float):
     h = constants.h
     kB = constants.Boltzmann
     Re_Yin = np.real(1/Yin)
-    s_ii = h*f*Re_Zin*(1+1/np.tanh(h*f/(2*kB*T)))
+    s_ii = h*f*Re_Yin*(1+1/np.tanh(h*f/(2*kB*T)))
     return s_ii
 
 ##############################################
@@ -533,13 +533,14 @@ class Network():
         S11, S12, S21, S22 = extract_S_pars(M_system, Zgen=self.Zgen)
         # plot parameters
         if plot:
-            fig, axs = plt.subplots(figsize=(8,4), ncols=2, nrows=2, sharex='col')#, sharey='row')
+            fig, axs = plt.subplots(figsize=(8,5), ncols=2, nrows=2, sharex='col')#, sharey='row')
             for ax, s_param, name in zip(axs.flatten(), [S11, S12, S21, S22], ['S_{11}', 'S_{12}', 'S_{21}', 'S_{22}']):
                 ax.plot(frequency, np.abs(s_param))
                 if name in ['S_{21}', 'S_{22}']:
                     set_xlabel(ax, 'frequency', 'Hz')
                 set_ylabel(ax, f'$|{name}|$')
             fig.suptitle('Scattering parameters')
+            fig.tight_layout()
         return S11, S12, S21, S22
 
     def get_Z_parameters(self, frequency, Z_load: float = None):
@@ -684,140 +685,234 @@ class Network():
         else:
             return PSD
 
-    def _generate_thermal_noise_ensemble(self, frequency: float, PSD: float, shots: int = 100000):
+    def get_svv_at_output(self, frequency: list, Z_load: float = None, plot: bool = False):
         '''
-        Get a thermal ensemble of voltage shots.
+        Calculate spectral density of squared voltage 
+        (used for Fermi's golden rule).
         Args:
-            frequency : frequency over which PSD was sampled (Hz)
-            PSD       : Power spectral density (J/Hz)
+            frequency : frequency, should be given as array.
+            Z_load    : load impedance at input of network.
         '''
-        if isinstance(shots, float):
-            shots = int(shots)
-        bandwidth = frequency.max() - frequency.min()
-        df = frequency[1]-frequency[0]
-        PSD_V2 = PSD*self.Zgen
-        # ensemble of thermal shots
-        v_noise = np.zeros(shots, dtype=np.complex128)
-        for i in range(shots):
-            phase = np.random.random(101)*2*np.pi
-            v_rms = np.sqrt(PSD_V2*df)
-            v_noise[i] = np.sum(v_rms/np.sqrt(2)*np.exp(1j*phase))
-        return v_noise
 
-    def get_node_thermal_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0,
-                            shots: int = 100000, add_quantum_noise: bool = False, on_figure: bool = False):
-        '''
-        Compute the voltage and current at a given node of the network for an input coherent state
-        and compute Wigner function in voltage.
-        Args:
-            node_idx : node of circuit.
-            in_freq  : input signal frequency.
-            in_amp   : input signal amplitude (V).
-            in_phase : input signal phase (deg).
-        '''
-        # get voltage and current at node
-        v_node, i_node = self.get_node_VI(node_idx=node_idx, in_freq=in_freq, in_amp=in_amp, in_phase=in_phase)
-        v_node, i_node = v_node[0], i_node[0]
-        assert (type(v_node) is complex) or (type(v_node) is np.complex128)
-        # get thermal voltages ensemble
-        bandwidth = 2.4e9
-        frequency = np.linspace(-bandwidth/2, bandwidth/2, 101)+in_freq
-        PSD = self.get_psd_at_node(node_idx=node_idx, frequency=frequency, add_quantum_noise=add_quantum_noise)
-        v_noise = self._generate_thermal_noise_ensemble(frequency=frequency, PSD=PSD, shots=shots)
-        v_thermal = v_noise + v_node
-        SNR = np.mean(np.abs(v_thermal)) / np.std(np.abs(v_thermal))
-        # glot thermal shot distribution
-        if on_figure:
-            ax = self.fig.add_subplot(111)
-            move_subplot(ax, dx=-.5+.725*node_idx, dy=(node_idx%2-.65)*2.5, scale_x=2, scale_y=2)
-            ax_fig = self.fig.get_axes()[0]
-            node_coords = (1.3*node_idx, 0)
-            ax_fig.plot([                     node_coords[0]+.91, node_coords[0],                      node_coords[0]-.89],
-                        [node_coords[1]+(1.1*(node_idx%2)-.65)*2.5+.05, node_coords[1], node_coords[1]+(1.1*(node_idx%2)-.65)*2.5+.05], 
-                        color='k', ls='--', alpha=.2, clip_on=False, zorder=-5)
-        else:
-            fig, ax = plt.subplots(figsize=(3.5, 3.5))
-            ax.set_title(f'Thermal voltage at node {node_idx}')
-        heatmap, xedges, yedges = np.histogram2d(np.real(v_thermal), np.imag(v_thermal), bins=21,)
-        ax.pcolormesh(xedges, yedges, heatmap, cmap='Blues')
-        ax.grid(ls='--', lw=1, color='gray', alpha=.25)
-        ax.annotate('', xy=(np.real(v_node), np.imag(v_node)), xytext=(0, 0),
-                    arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
-        ax.text(.1, .9, f'SNR$={SNR:.3g}$', va='top', ha='left', transform=ax.transAxes)
-        axlim = np.abs(np.concatenate((xedges, yedges))).max()*1.1
-        ax.set_xlim(-axlim, axlim)
-        ax.set_ylim(-axlim, axlim)
-        set_xlabel(ax, 'Voltage I', unit='V')
-        set_ylabel(ax, 'Voltage Q', unit='V')
+        # Compute scattering parameters
+        # (Z_load here is used to estimate input and output impedances)
+        if Z_load is None:
+            Z_load = self.Zgen
+        # get power spectral density
+        n_elements = len(self.elements)
+        psd = self.get_psd_at_node(node_idx=n_elements, frequency=frequency)
+        # calculate output impedance
+        _, _, _, _, _, zout = self.get_Z_parameters(frequency=frequency, Z_load=Z_load)
+        # calculate Svv
+        s_vv = psd*np.real(zout)
+        # plot
+        if plot:
+            fig, ax = plt.subplots(figsize=(5,3.5))
+            ax.plot(frequency, s_vv)
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+            set_xlabel(ax, 'frequency (Hz)')
+            set_ylabel(ax, '$S_{{VV}}$ ($\\mathrm{{V^2\\:Hz^{{-1}}}}$)')
+            ax.set_title('Voltage spectral density')
+        return s_vv
 
-    def get_node_quantum_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0):
+    def get_sii_at_output(self, frequency: list, Z_load: float = None, plot: bool = False):
         '''
-        Compute the voltage and current at a given node of the network for an input coherent state
-        and compute Wigner function in voltage.
+        Calculate spectral density of squared current 
+        (used for Fermi's golden rule).
         Args:
-            node_idx : node of circuit.
-            in_freq  : input signal frequency.
-            in_amp   : input signal amplitude (V).
-            in_phase : input signal phase (deg).
+            frequency : frequency, should be given as array.
+            Z_load    : load impedance at input of network.
         '''
-        v_node, i_node = self.get_node_VI(node_idx=node_idx, in_freq=in_freq, in_amp=in_amp, in_phase=in_phase)
-        v_node, i_node = v_node[0], i_node[0]
-        # z_node = v_node/i_node
-        z_node = self.Zgen
-        assert (type(v_node) is complex) or (type(v_node) is np.complex128)
-        # calculate vacuum state fluctuations of voltage
-        h = constants.h
-        e = constants.e
-        Phi_0 = h/(2*e)  # flux quantum
-        R_Q = h/(4*e**2) # resistance quantum
-        V_zpf = (2*np.pi*in_freq)*Phi_0*np.sqrt(z_node/(R_Q*4*np.pi))
-        # calculate equivalent coherent state
-        alpha = (v_node/V_zpf)
-        N = 200
-        # single coherent state
-        state = qutip.coherent_dm(N, alpha/np.sqrt(2))
-        x_vec = np.linspace(-12, 12, 121)
-        W_func = qutip.wigner(state, x_vec, x_vec)
-        # Plot wigner function
-        fig, ax = plt.subplots(figsize=(3.5, 3.5))
-        ax.pcolormesh(x_vec, x_vec, W_func, cmap='Blues', shading='nearest')
-        ax.grid(ls='--', lw=1, color='gray', alpha=.25)
-        ax.set_ylabel('$Y$ Quadrature')
-        ax.set_xlabel('$X$ Quadrature')
-        ax.set_title(f'Quantum voltage at node {node_idx}')
-        ax.annotate('', xy=(np.real(alpha), np.imag(alpha)), xytext=(0, 0),
-                    arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
-        # Vzpf axes
-        ax_vy = ax.twinx()
-        ax_vx = ax.twiny()
-        ax_vy.set_ylim([l*V_zpf for l in ax.get_ylim()])
-        ax_vx.set_xlim([l*V_zpf for l in ax.get_xlim()])
-        set_ylabel(ax_vy, 'Voltage Q', 'V')
-        set_xlabel(ax_vx, 'Voltage I', 'V')
-        # bandwidth = 2.4e9
-        # frequency = np.linspace(-bandwidth/2, bandwidth/2, 101)+in_freq
-        # PSD = PSD_quantum(frequency, self.Zgen)
-        # v_noise = self._generate_thermal_noise_ensemble(frequency=frequency, PSD=PSD, shots=1e5)
-        # v_thermal = v_noise + v_node
-        # heatmap, xedges, yedges = np.histogram2d(np.real(v_thermal), np.imag(v_thermal), bins=21,)
-        # fig, ax = plt.subplots(figsize=(3.5, 3.5))
-        # ax.pcolormesh(xedges, yedges, heatmap, cmap='Blues')
-        # ax.set_ylim(ax_vy.get_ylim())
-        # ax.set_xlim(ax_vx.get_xlim())
-        # ax.annotate('', xy=(np.real(v_node), np.imag(v_node)), xytext=(0, 0),
-        #             arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
-        # ax.grid(ls='--', lw=1, color='gray', alpha=.25)
-        # set_ylabel(ax, 'Voltage Q', 'V')
-        # set_xlabel(ax, 'Voltage I', 'V')
-        # fig, ax = plt.subplots(figsize=(3.5, 3.5))
-        # ax_vx.axvline(np.real(v_node*1e6), color='C3', ls='--')
-        # ax_vy.axhline(np.imag(v_node*1e6), color='C3', ls='--')
-        # get thermal voltages ensemble
-        # V_func = np.random.multivariate_normal((np.real(v_node), np.imag(v_node)), np.array([[V_zpf,0], [0, V_zpf]]), 100000)
-        # x_volt = x_vec*V_zpf
-        # ax.pcolormesh(x_volt, x_volt, W_func, cmap='Blues', shading='nearest')
-        # set_ylabel(ax, 'Voltage Q', 'V')
-        # set_xlabel(ax, 'Voltage I', 'V')
+
+        # Compute scattering parameters
+        # (Z_load here is used to estimate input and output impedances)
+        if Z_load is None:
+            Z_load = self.Zgen
+        # get power spectral density
+        n_elements = len(self.elements)
+        psd = self.get_psd_at_node(node_idx=n_elements, frequency=frequency)
+        # calculate output impedance
+        _, _, _, _, _, zout = self.get_Z_parameters(frequency=frequency, Z_load=Z_load)
+        # calculate Sii
+        s_ii = psd/np.real(zout)
+        # plot
+        if plot:
+            fig, ax = plt.subplots(figsize=(5,3.5))
+            ax.plot(frequency, s_ii)
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+            set_xlabel(ax, 'frequency (Hz)')
+            set_ylabel(ax, '$S_{{II}}$ ($\\mathrm{{A^2\\:Hz^{{-1}}}}$)')
+            ax.set_title('Current spectral density')
+        return s_ii
+
+    def get_spp_at_output(self, frequency: list, M_henry: float, Z_load: float = None, plot: bool = False):
+        '''
+        Calculate spectral density of squared flux from mutual inductive coupling
+        (used for Fermi's golden rule).
+        Args:
+            frequency : frequency, should be given as array.
+            M_henry   : Mutual inductance of line.
+            Z_load    : load impedance at input of network.
+        '''
+
+        # Compute scattering parameters
+        # (Z_load here is used to estimate input and output impedances)
+        if Z_load is None:
+            Z_load = self.Zgen
+        # get current spectral density
+        s_ii = self.get_sii_at_output(frequency=frequency, Z_load=Z_load)
+        # convert mutual inductance from henry (Webber/amp) to phi0/amp
+        phi_0 = constants.physical_constants['mag. flux quantum'][0]
+        M_phi0 = M_henry/phi_0
+        # calculate flux spectral density
+        s_pp = M_phi0**2 * s_ii
+        # plot
+        if plot:
+            fig, ax = plt.subplots(figsize=(5,3.5))
+            ax.plot(frequency, s_pp)
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+            set_xlabel(ax, 'frequency (Hz)')
+            set_ylabel(ax, '$S_{{\\Phi\\Phi}}$ ($\\mathrm{{{{\\Phi_0}}^2\\:Hz^{{-1}}}}$)')
+            ax.set_title('Flux spectral density')
+        return s_pp
+
+    # def _generate_thermal_noise_ensemble(self, frequency: float, PSD: float, shots: int = 100000):
+    #     '''
+    #     Get a thermal ensemble of voltage shots.
+    #     Args:
+    #         frequency : frequency over which PSD was sampled (Hz)
+    #         PSD       : Power spectral density (J/Hz)
+    #     '''
+    #     if isinstance(shots, float):
+    #         shots = int(shots)
+    #     bandwidth = frequency.max() - frequency.min()
+    #     df = frequency[1]-frequency[0]
+    #     PSD_V2 = PSD*self.Zgen
+    #     # ensemble of thermal shots
+    #     v_noise = np.zeros(shots, dtype=np.complex128)
+    #     for i in range(shots):
+    #         phase = np.random.random(101)*2*np.pi
+    #         v_rms = np.sqrt(PSD_V2*df)
+    #         v_noise[i] = np.sum(v_rms/np.sqrt(2)*np.exp(1j*phase))
+    #     return v_noise
+
+    # def get_node_thermal_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0,
+    #                         shots: int = 100000, add_quantum_noise: bool = False, on_figure: bool = False):
+    #     '''
+    #     Compute the voltage and current at a given node of the network for an input coherent state
+    #     and compute Wigner function in voltage.
+    #     Args:
+    #         node_idx : node of circuit.
+    #         in_freq  : input signal frequency.
+    #         in_amp   : input signal amplitude (V).
+    #         in_phase : input signal phase (deg).
+    #     '''
+    #     # get voltage and current at node
+    #     v_node, i_node = self.get_node_VI(node_idx=node_idx, in_freq=in_freq, in_amp=in_amp, in_phase=in_phase)
+    #     v_node, i_node = v_node[0], i_node[0]
+    #     assert (type(v_node) is complex) or (type(v_node) is np.complex128)
+    #     # get thermal voltages ensemble
+    #     bandwidth = 2.4e9
+    #     frequency = np.linspace(-bandwidth/2, bandwidth/2, 101)+in_freq
+    #     PSD = self.get_psd_at_node(node_idx=node_idx, frequency=frequency, add_quantum_noise=add_quantum_noise)
+    #     v_noise = self._generate_thermal_noise_ensemble(frequency=frequency, PSD=PSD, shots=shots)
+    #     v_thermal = v_noise + v_node
+    #     SNR = np.mean(np.abs(v_thermal)) / np.std(np.abs(v_thermal))
+    #     # glot thermal shot distribution
+    #     if on_figure:
+    #         ax = self.fig.add_subplot(111)
+    #         move_subplot(ax, dx=-.5+.725*node_idx, dy=(node_idx%2-.65)*2.5, scale_x=2, scale_y=2)
+    #         ax_fig = self.fig.get_axes()[0]
+    #         node_coords = (1.3*node_idx, 0)
+    #         ax_fig.plot([                     node_coords[0]+.91, node_coords[0],                      node_coords[0]-.89],
+    #                     [node_coords[1]+(1.1*(node_idx%2)-.65)*2.5+.05, node_coords[1], node_coords[1]+(1.1*(node_idx%2)-.65)*2.5+.05], 
+    #                     color='k', ls='--', alpha=.2, clip_on=False, zorder=-5)
+    #     else:
+    #         fig, ax = plt.subplots(figsize=(3.5, 3.5))
+    #         ax.set_title(f'Thermal voltage at node {node_idx}')
+    #     heatmap, xedges, yedges = np.histogram2d(np.real(v_thermal), np.imag(v_thermal), bins=21,)
+    #     ax.pcolormesh(xedges, yedges, heatmap, cmap='Blues')
+    #     ax.grid(ls='--', lw=1, color='gray', alpha=.25)
+    #     ax.annotate('', xy=(np.real(v_node), np.imag(v_node)), xytext=(0, 0),
+    #                 arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
+    #     ax.text(.1, .9, f'SNR$={SNR:.3g}$', va='top', ha='left', transform=ax.transAxes)
+    #     axlim = np.abs(np.concatenate((xedges, yedges))).max()*1.1
+    #     ax.set_xlim(-axlim, axlim)
+    #     ax.set_ylim(-axlim, axlim)
+    #     set_xlabel(ax, 'Voltage I', unit='V')
+    #     set_ylabel(ax, 'Voltage Q', unit='V')
+
+    # def get_node_quantum_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0):
+    #     '''
+    #     Compute the voltage and current at a given node of the network for an input coherent state
+    #     and compute Wigner function in voltage.
+    #     Args:
+    #         node_idx : node of circuit.
+    #         in_freq  : input signal frequency.
+    #         in_amp   : input signal amplitude (V).
+    #         in_phase : input signal phase (deg).
+    #     '''
+    #     v_node, i_node = self.get_node_VI(node_idx=node_idx, in_freq=in_freq, in_amp=in_amp, in_phase=in_phase)
+    #     v_node, i_node = v_node[0], i_node[0]
+    #     # z_node = v_node/i_node
+    #     z_node = self.Zgen
+    #     assert (type(v_node) is complex) or (type(v_node) is np.complex128)
+    #     # calculate vacuum state fluctuations of voltage
+    #     h = constants.h
+    #     e = constants.e
+    #     Phi_0 = h/(2*e)  # flux quantum
+    #     R_Q = h/(4*e**2) # resistance quantum
+    #     V_zpf = (2*np.pi*in_freq)*Phi_0*np.sqrt(z_node/(R_Q*4*np.pi))
+    #     # calculate equivalent coherent state
+    #     alpha = (v_node/V_zpf)
+    #     N = 200
+    #     # single coherent state
+    #     state = qutip.coherent_dm(N, alpha/np.sqrt(2))
+    #     x_vec = np.linspace(-12, 12, 121)
+    #     W_func = qutip.wigner(state, x_vec, x_vec)
+    #     # Plot wigner function
+    #     fig, ax = plt.subplots(figsize=(3.5, 3.5))
+    #     ax.pcolormesh(x_vec, x_vec, W_func, cmap='Blues', shading='nearest')
+    #     ax.grid(ls='--', lw=1, color='gray', alpha=.25)
+    #     ax.set_ylabel('$Y$ Quadrature')
+    #     ax.set_xlabel('$X$ Quadrature')
+    #     ax.set_title(f'Quantum voltage at node {node_idx}')
+    #     ax.annotate('', xy=(np.real(alpha), np.imag(alpha)), xytext=(0, 0),
+    #                 arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
+    #     # Vzpf axes
+    #     ax_vy = ax.twinx()
+    #     ax_vx = ax.twiny()
+    #     ax_vy.set_ylim([l*V_zpf for l in ax.get_ylim()])
+    #     ax_vx.set_xlim([l*V_zpf for l in ax.get_xlim()])
+    #     set_ylabel(ax_vy, 'Voltage Q', 'V')
+    #     set_xlabel(ax_vx, 'Voltage I', 'V')
+    #     # bandwidth = 2.4e9
+    #     # frequency = np.linspace(-bandwidth/2, bandwidth/2, 101)+in_freq
+    #     # PSD = PSD_quantum(frequency, self.Zgen)
+    #     # v_noise = self._generate_thermal_noise_ensemble(frequency=frequency, PSD=PSD, shots=1e5)
+    #     # v_thermal = v_noise + v_node
+    #     # heatmap, xedges, yedges = np.histogram2d(np.real(v_thermal), np.imag(v_thermal), bins=21,)
+    #     # fig, ax = plt.subplots(figsize=(3.5, 3.5))
+    #     # ax.pcolormesh(xedges, yedges, heatmap, cmap='Blues')
+    #     # ax.set_ylim(ax_vy.get_ylim())
+    #     # ax.set_xlim(ax_vx.get_xlim())
+    #     # ax.annotate('', xy=(np.real(v_node), np.imag(v_node)), xytext=(0, 0),
+    #     #             arrowprops=dict(arrowstyle= '-|>', color='gray', lw=2, ls='-', shrinkA=0, shrinkB=0))
+    #     # ax.grid(ls='--', lw=1, color='gray', alpha=.25)
+    #     # set_ylabel(ax, 'Voltage Q', 'V')
+    #     # set_xlabel(ax, 'Voltage I', 'V')
+    #     # fig, ax = plt.subplots(figsize=(3.5, 3.5))
+    #     # ax_vx.axvline(np.real(v_node*1e6), color='C3', ls='--')
+    #     # ax_vy.axhline(np.imag(v_node*1e6), color='C3', ls='--')
+    #     # get thermal voltages ensemble
+    #     # V_func = np.random.multivariate_normal((np.real(v_node), np.imag(v_node)), np.array([[V_zpf,0], [0, V_zpf]]), 100000)
+    #     # x_volt = x_vec*V_zpf
+    #     # ax.pcolormesh(x_volt, x_volt, W_func, cmap='Blues', shading='nearest')
+    #     # set_ylabel(ax, 'Voltage Q', 'V')
+    #     # set_xlabel(ax, 'Voltage I', 'V')
 
     def find_resonance_parameters(self, frequency_bounds: tuple):
         '''
