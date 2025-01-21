@@ -193,6 +193,12 @@ def get_pulse_from_fft(freq_axis, fft):
 def square_pulse(time, pulse_duration, frequency, pulse_pad=0):
     return np.sin(time*frequency*2*np.pi+np.pi/5)*(np.heaviside(time-pulse_pad, 1)-np.heaviside(time-pulse_duration-pulse_pad, 1))
 
+def Vp_from_PdBm(P_dBm, R=50):
+    '''
+    Convert power in dBm to voltage peak.
+    '''
+    return np.sqrt(R*10**(P_dBm/10-3))
+
 def _solve_nan(array):
     # interpolate nan values in array
     idxs_nan = np.where(np.isnan(array))[0]
@@ -229,12 +235,6 @@ def PSD_quantum(f, Z0):
     bandwidth = f.max()-f.min()
     PSD = np.ones(f.shape)*2*V_zpf**2/Z0/bandwidth
     return PSD
-
-def Vp_from_PdBm(P_dBm, R=50):
-    '''
-    Convert power in dBm to voltage peak.
-    '''
-    return np.sqrt(R*10**(P_dBm/10-3))
 
 def S_vv(f, Zin, T: float):
     '''
@@ -310,8 +310,12 @@ class Network():
     #################################################
     def add_capacitance(self, C: float, element_type: str, element_idx=None):
         '''
-        Add a capacitive element to the network.
-        Can be made in series or in parallel.
+        Add a capacitance to the network.
+
+        Args:
+            C            : capacitance (Farads)
+            element_type : arrangement of circuit element ("series" or "parallel")
+            element_idx  : position index in network (used only to replace existing elements)
         '''
         # Assertion
         assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
@@ -330,8 +334,12 @@ class Network():
 
     def add_inductance(self, L: float, element_type: str, element_idx=None):
         '''
-        Add an inductive element to the network.
-        Can be made in series or in parallel.
+        Add an inductance to the network.
+
+        Args:
+            L            : Inductance (Henry)
+            element_type : arrangement of circuit element ("series" or "parallel")
+            element_idx  : position index in network (used only to replace existing elements)
         '''
         # Assertion
         assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
@@ -350,8 +358,12 @@ class Network():
 
     def add_resistor(self, R: float, element_type: str, element_idx=None):
         '''
-        Add a resistor element to the network.
-        Can be made in series or in parallel.
+        Add a resistor to the network.
+
+        Args:
+            R            : Resistance (Ohms)
+            element_type : arrangement of circuit element ("series" or "parallel")
+            element_idx  : position index in network (used only to replace existing elements)
         '''
         # Assertion
         assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
@@ -371,6 +383,12 @@ class Network():
     def add_transmission_line(self, length: float, Z0: float, phase_velocity: float, element_idx=None):
         '''
         Add a series transmission line element to network.
+
+        Args:
+            length         : length of transmission line (meters)
+            Z0             : characteristic impedance of transmission line (Ohms)
+            phase_velocity : speed of light in transmission line (m/s)
+            element_idx    : position index in network (used only to replace existing elements)
         '''
         M_t = lambda frequency: M_series_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0)
         # if element already exists
@@ -382,6 +400,13 @@ class Network():
     def add_parallel_transmission_line(self, length: float, Z0: float, phase_velocity: float, Z_load: float, element_idx=None):
         '''
         Add a parallel transmission line element to network.
+
+        Args:
+            length         : length of transmission line (meters)
+            Z0             : characteristic impedance of transmission line (Ohms)
+            phase_velocity : speed of light in transmission line (m/s)
+            Z_load         : load impedance of at the end of the transmission line (Ohm)
+            element_idx    : position index in network (used only to replace existing elements)
         '''
         M_t = lambda frequency: M_parallel_impedance(Z_term_transline(frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_load))
         # if element already exists
@@ -390,32 +415,17 @@ class Network():
         else:
             self._substitute_element(M_t, element_idx, name='parallel_transmission_line', properties={'Z_load': Z_load, 'length': length})
 
-    def add_attenuator(self, attn_dB: float, Z0: float, temperature_K: float, element_idx=None):
-        '''
-        Add a series attenuator element to network.
-        '''
-        M_a = lambda frequency: M_attenuator(Freq=frequency, attn_dB=attn_dB, Z0=Z0)
-        # if element already exists
-        if element_idx is None:
-            self._add_element(M_a, name='attenuator', properties={'attn_dB': attn_dB, 'temperature_K': temperature_K})
-        else:
-            self._substitute_element(M_a, element_idx, name=f'attenuator_{attn_dB:.0f}', properties={'attn_dB': attn_dB, 'temperature_K': temperature_K})
-
-    def add_amplifier(self, gain_dB: float, temperature_K: float, Z0: float, element_idx=None):
-        '''
-        Add a series amplifier element to network.
-        '''
-        M_a = lambda frequency: M_amplifier(Freq=frequency, gain_dB=gain_dB, Z0=Z0)
-        # if element already exists
-        if element_idx is None:
-            self._add_element(M_a, name='amplifier', properties={'gain_dB': gain_dB, 'temperature_K': temperature_K})
-        else:
-            self._substitute_element(M_a, element_idx, name=f'amplifier_{gain_dB:.0f}')
-
     def add_capacitively_coupled_hanger(self, length: float, Z0: float, phase_velocity: float, Z_termination: float, C_coupling: float, element_idx=None):
         '''
-        Add a parallel terminated transmission line
-        in series with a capacitor element to network.
+        Add a parallel terminated transmission line in series with a capacitor element to network.
+
+        Args:
+            length         : length of transmission line (meters)
+            Z0             : characteristic impedance of transmission line (Ohms)
+            phase_velocity : speed of light in transmission line (m/s)
+            Z_termination  : load impedance of at the end of the transmission line (Ohm)
+            C_coupling     : capacitance (C)
+            element_idx    : position index in network (used only to replace existing elements)
         '''
         # impedance of capacitor
         Z_C = lambda frequency: Z_capacitor(Freq=frequency, C=C_coupling)
@@ -431,8 +441,17 @@ class Network():
 
     def add_inductively_coupled_hanger(self, length: float, Z0: float, phase_velocity: float, Z_termination: float, L_line: float, L_hanger: float, M_inductance: float, element_idx=None):
         '''
-        Add a parallel terminated transmission line
-        inductively coupled to main line of network.
+        Add a parallel terminated transmission line inductively coupled to main line of network.
+
+        Args:
+            length         : length of transmission line (meters)
+            Z0             : characteristic impedance of transmission line (Ohms)
+            phase_velocity : speed of light in transmission line (m/s)
+            Z_termination  : load impedance of at the end of the transmission line (Ohm)
+            L_line         : inductance on main line (H)
+            L_hanger       : inductance on parallel line (H)
+            M_inductance   : mutual inductance between parallel and series inductance (H).
+            element_idx    : position index in network (used only to replace existing elements)
         '''
         # impedance of terminated transmission line
         Z_t = lambda frequency: Z_term_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_termination)
@@ -444,9 +463,52 @@ class Network():
         else:
             self._substitute_element(M_t, element_idx, name='ind_resonator')
 
-    def add_commercial_component(self, name: str, temperature_K: float, element_idx=None, plot_params: bool = False):
+    def add_attenuator(self, attn_dB: float, Z0: float, temperature_K: float, element_idx=None):
         '''
-        Add a component from S matrix data available.
+        Add an attenuator to the network.
+        (This component is implemented as a pi-network of resistors).
+
+        Args:
+            attn_dB       : power attenuation of attenuator (dB)
+            Z0            : characteristic impedance of attenuator (Ohms)
+            temperature_K : temperature of component (Kelvin)
+            element_idx   : position index in network (used only to replace existing elements)
+        '''
+        M_a = lambda frequency: M_attenuator(Freq=frequency, attn_dB=attn_dB, Z0=Z0)
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_a, name='attenuator', properties={'attn_dB': attn_dB, 'temperature_K': temperature_K})
+        else:
+            self._substitute_element(M_a, element_idx, name=f'attenuator_{attn_dB:.0f}', properties={'attn_dB': attn_dB, 'temperature_K': temperature_K})
+
+    def add_amplifier(self, gain_dB: float, temperature_K: float, Z0: float, element_idx=None):
+        '''
+        Add an amplifier to the network.
+        (This component is implemented as a pi-network of resistors).
+
+        Args:
+            gain_dB       : power gain of amplifier (dB)
+            Z0            : characteristic impedance of attenuator (Ohms)
+            temperature_K : temperature of component (Kelvin)
+            element_idx   : position index in network (used only to replace existing elements)
+        '''
+        M_a = lambda frequency: M_amplifier(Freq=frequency, gain_dB=gain_dB, Z0=Z0)
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_a, name='amplifier', properties={'gain_dB': gain_dB, 'temperature_K': temperature_K})
+        else:
+            self._substitute_element(M_a, element_idx, name=f'amplifier_{gain_dB:.0f}')
+
+    def add_custom_component(self, name: str, temperature_K: float, element_idx=None, plot_params: bool = False):
+        '''
+        Add a component from S matrix data available in .s2p.
+        See .\circuit_components\ for avaliable components.
+
+        Args:
+            name          : name of component (must match name of file found in the directory)
+            temperature_K : temperature of component (Kelvin)
+            element_idx   : position index in network (used only to replace existing elements)
+            plot_params   : plot parameters used to model component.
         '''
         component_data_file = os.path.abspath(os.path.join(__file__, '..', 'circuit_components', f'{name}.s2p'))
         # try:
@@ -455,7 +517,7 @@ class Network():
         if data['param_type'].lower() == 's':
             freq = np.array(data['frequency'])
             S11 = np.array(data['11'])
-            # S12 = np.array(data['12']) # to avoid numerical instabilities
+            # S12 = np.array(data['12']) # we do this to avoid numerical instabilities
             S12 = np.array(data['21'])
             S21 = np.array(data['21'])
             S22 = np.array(data['22'])
@@ -513,10 +575,13 @@ class Network():
     #################################################
     # Methods for properties/behaviors of network
     #################################################
-    def get_S_parameters(self, frequency, plot: bool = False):
+    def get_S_parameters(self, frequency: list, plot: bool = False):
         '''
-        Compute the S parameters of the network
-        over a frequency range.
+        Compute the scattering parameters of the network over a frequency range.
+
+        Args:
+            frequency : frequency array over which to evaluate scattering params
+            plot      : plot scattering parameters
         '''
         # convert frequency into array
         if isinstance(frequency, float):
@@ -543,10 +608,14 @@ class Network():
             fig.tight_layout()
         return S11, S12, S21, S22
 
-    def get_Z_parameters(self, frequency, Z_load: float = None):
+    def get_Z_parameters(self, frequency: list, Z_load: float = None, plot: bool = False):
         '''
-        Compute the Z parameters of the network
-        over a frequency range.
+        Compute the Z parameters of the network over a frequency range.
+
+        Args:
+            frequency : frequency array over which to evaluate scattering params
+            Z_load    : load impedance used to compute input and output impedance of network
+            plot      : plot impedance parameters
         '''
         # convert frequency into array
         if isinstance(frequency, float):
@@ -564,38 +633,31 @@ class Network():
         if Z_load is None:
             Z_load = self.Zgen
         Z11, Z12, Z21, Z22, Zin, Zout = extract_Z_pars(M_system, ZL=Z_load)
+        # plot parameters
+        if plot:
+            fig, axs = plt.subplots(figsize=(8,5), ncols=2, nrows=2, sharex='col')#, sharey='row')
+            for ax, z_param, name in zip(axs.flatten(), [Z11, Z12, Z21, Z22], ['Z_{11}', 'Z_{12}', 'Z_{21}', 'Z_{22}']):
+                ax.plot(frequency, np.abs(np.real(z_param)), label='$\\mathscr{{Re}}[z]$')
+                ax.plot(frequency, np.abs(np.imag(z_param)), label='$\\mathscr{{Im}}[z]$')
+                ax.set_yscale('log')
+                if name in ['Z_{21}', 'Z_{22}']:
+                    set_xlabel(ax, 'frequency', 'Hz')
+                ax.set_ylabel(f'${name}$ ($\Omega$)')
+            axs[0,0].legend(frameon=False)
+            fig.suptitle('Impedance parameters')
+            fig.tight_layout()
         return Z11, Z12, Z21, Z22, Zin, Zout
-
-    def get_signal_response(self, time, signal):
-        '''
-        Get the signal response of network to an input signal.
-        Computes the scattered signal via S parameters.
-        '''
-        # express signal in frequency domain
-        freq_axis, fft = get_fft_from_pulse(time_axis=time, pulse=signal)
-        # compute Scattering parameters of network along frequency domain
-        s11, s12, s21, s22 = self.get_S_parameters(frequency=freq_axis)
-        # Resolve nans in scattering parameters
-        s11, s12, s21, s22 = _solve_nan(s11), _solve_nan(s12), _solve_nan(s21), _solve_nan(s22)
-        # compute scattered spectrum
-        fft_11, fft_12, fft_21, fft_22 = s11*fft, s12*fft, s21*fft, s22*fft
-        fft_11, fft_12, fft_21, fft_22 = np.conjugate(s11)*fft, np.conjugate(s12)*fft, np.conjugate(s21)*fft, np.conjugate(s22)*fft
-        # recover signal in time domain
-        time, signal_11 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_11)
-        time, signal_12 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_12)
-        time, signal_21 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_21)
-        time, signal_22 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_22)
-        return time, signal_11, signal_12, signal_21, signal_22
 
     def get_node_VI(self, node_idx: int, in_freq: float, in_amp: float = 1, in_phase: float = 0, Z_load : float = None):
         '''
-        Compute the voltage and current at a given node of the network for a given input field,
+        Compute the voltage and current phasors at a node of the network for a given input field,
         on port 0 and a load impedance <Z_load> on the output port.
+
         Args:
             node_idx : node of circuit.
-            in_freq  : input signal frequency (Hz).
-            in_amp   : input signal amplitude (V).
-            in_phase : input signal phase (deg).
+            in_freq  : input signal phasor frequency (Hz).
+            in_amp   : input signal phasor amplitude (V).
+            in_phase : input signal phasor phase (deg).
             Z_load   : load impedance on ouput port (Ohm).
         '''
         assert node_idx < len(self.elements)+1, f'Network contains only {len(self.elements)+1} nodes.'
@@ -624,12 +686,47 @@ class Network():
         vnode, inode = A_node[:,0], A_node[:,1]
         return vnode, inode
 
-    def get_psd_at_node(self, node_idx: int, frequency: list, plot: bool = False, add_quantum_noise: bool = False):
+    def get_signal_response(self, time: list, signal: list):
         '''
-        Calculate the cascaded psd from all finite temperature elements in the network.
+        Get the response of the network to an input signal.
+        Performed by computing the scattered signal using S matrix of the network.
+
+        Args:
+            time   : frequency array over which to evaluate scattering params
+            signal : load impedance used to compute input and output impedance of network
         '''
+        # assertion
+        assert len(time) == len(signal), 'time and signal axis must have same dimensions!'
+        # express signal in frequency domain
+        freq_axis, fft = get_fft_from_pulse(time_axis=time, pulse=signal)
+        # compute Scattering parameters of network along frequency domain
+        s11, s12, s21, s22 = self.get_S_parameters(frequency=freq_axis)
+        # resolve nans in scattering parameters
+        s11, s12, s21, s22 = _solve_nan(s11), _solve_nan(s12), _solve_nan(s21), _solve_nan(s22)
+        # compute scattered spectrum
+        fft_11, fft_12, fft_21, fft_22 = s11*fft, s12*fft, s21*fft, s22*fft
+        fft_11, fft_12, fft_21, fft_22 = np.conjugate(s11)*fft, np.conjugate(s12)*fft, np.conjugate(s21)*fft, np.conjugate(s22)*fft
+        # recover signal in time domain
+        time, signal_11 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_11)
+        time, signal_12 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_12)
+        time, signal_21 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_21)
+        time, signal_22 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_22)
+        return time, signal_11, signal_12, signal_21, signal_22
+
+    def get_psd_at_node(self, frequency: list, node_idx: int = None, initial_node_temp: float = 300, plot: bool = False):
+        '''
+        Calculate the cascaded power spectral density from all finite temperature elements in the network.
+
+        Args:
+            frequency : frequency array over which to evaluate psd
+            node_idx  : node of circuit.
+            plot      : plot psd at avery node until node_idx
+        '''
+        # default to last node
+        if node_idx is None:
+            node_idx = len(self.elements)
         # Start with a 300 K PSD
-        PSD = PSD_thermal(frequency, T=300)
+        PSD = PSD_thermal(frequency, T=initial_node_temp)
         # Quantum coherent state fluctuations
         PSD_Q = PSD_quantum(frequency, self.Zgen)
         if plot:
@@ -665,8 +762,6 @@ class Network():
                 gain_dB = self.element_properties[idx]['gain_dB']
                 gain = 10**(gain_dB/10) # here we should compute gain in power
                 # cascaded attenuation
-                if add_quantum_noise:
-                    PSD += PSD_Q
                 PSD = PSD_thermal(frequency, temperature_K) + gain*PSD
             elif element == 'commercial_component':
                 temperature_K = self.element_properties[idx]['temperature_K']
@@ -680,8 +775,6 @@ class Network():
         if plot:
             ax.legend(frameon=False, loc=2, bbox_to_anchor=(1.2, 1))
             _update_temperature_axis()
-        if add_quantum_noise:
-            return PSD + PSD_Q
         else:
             return PSD
 
@@ -689,9 +782,11 @@ class Network():
         '''
         Calculate spectral density of squared voltage 
         (used for Fermi's golden rule).
+
         Args:
-            frequency : frequency, should be given as array.
-            Z_load    : load impedance at input of network.
+            frequency : frequency, should be given as array
+            Z_load    : load impedance at input of network
+            plot      : plot Svv at node_idx
         '''
 
         # Compute scattering parameters
@@ -721,8 +816,9 @@ class Network():
         Calculate spectral density of squared current 
         (used for Fermi's golden rule).
         Args:
-            frequency : frequency, should be given as array.
-            Z_load    : load impedance at input of network.
+            frequency : frequency, should be given as array
+            Z_load    : load impedance at input of network
+            plot      : plot Sii at node_idx
         '''
 
         # Compute scattering parameters
@@ -751,10 +847,12 @@ class Network():
         '''
         Calculate spectral density of squared flux from mutual inductive coupling
         (used for Fermi's golden rule).
+
         Args:
-            frequency : frequency, should be given as array.
-            M_henry   : Mutual inductance of line.
-            Z_load    : load impedance at input of network.
+            frequency : frequency, should be given as array
+            M_henry   : Mutual inductance of line
+            Z_load    : load impedance at input of network
+            plot      : plot Svv at node_idx
         '''
 
         # Compute scattering parameters
