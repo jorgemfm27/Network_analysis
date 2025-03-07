@@ -10,7 +10,8 @@ def plot_capacitor(x0, y0, x1, y1, l_cap=.1, cap_dist=.15, **kwargs):
     # get current axis
     ax = plt.gca()
     # Plot settings
-    _plot_args = dict(color='k', lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
+    _plot_args = dict(color=kwargs.get('color', 'k'), lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
+    _plot_args = {**_plot_args,**kwargs}
     # compute displacement
     dx = x1-x0
     dy = y1-y0
@@ -164,6 +165,7 @@ def plot_transmission_line(x, y, l, horizontal=True, radius=.1, **kwargs):
     ax = plt.gca()
     # Plot settings
     _plot_args = dict(color='k', lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
+    _plot_args = {**_plot_args, **kwargs}
     # horizontal line
     if horizontal:
         theta = np.linspace(0, 2*np.pi, 101)
@@ -197,7 +199,7 @@ def plot_ground(x, y, l, lpad=0.1, horizontal=False, **kwargs):
     # get current axis
     ax = plt.gca()
     # Plot settings
-    _plot_args = dict(color='k', lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
+    _plot_args = dict(color=kwargs.get('color', 'k'), lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
     # Capacitor direction
     if horizontal:
         ax.plot([x, x+l], [y, y], **_plot_args, zorder=-1)
@@ -213,25 +215,34 @@ def plot_ground(x, y, l, lpad=0.1, horizontal=False, **kwargs):
         ax.plot([ x+lpad/2, x-lpad/2], [y-l-np.sign(l)*lpad/2, y-l-np.sign(l)*lpad/2], **_plot_args, zorder=-1)
         ax.plot([ x+lpad/8, x-lpad/8], [y-l-np.sign(l)*lpad, y-l-np.sign(l)*lpad], **_plot_args, zorder=-1)
 
-def plot_drive(x0, y0, x1, y1, amp=0.2, **kwargs):
+def plot_drive(x0, y0, x1, y1, amp=0.2, periods=8, **kwargs):
     '''
     Draw microwave drive
     '''
     # get current axis
     ax = plt.gca()
     # Plot settings
-    _plot_args = dict(color='k', lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
+    _plot_args = dict(color=kwargs.get('color', 'k'), lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
     # compute displacement
     dx = x1-x0
     dy = y1-y0
     theta = np.arctan2(dy, dx)
     L = np.sqrt(dx**2 + dy**2)/2
+    # midpoint
+    x_avg, y_avg = (x0+x1)/2, (y0+y1)/2
+    # waveform
+    phi = np.linspace(0, 2*np.pi, 101)*periods
+    x = np.linspace(-L, L, len(phi))
+    y = np.exp(-(x/(L/2))**2)  *  np.sin(phi)*amp
+    # plot
+    ax.plot(x*np.cos(theta)-y*np.sin(theta) + x_avg, y*np.cos(theta)+x*np.sin(theta) + y_avg, **_plot_args)
+    # arrow
+    _plot_args = dict(color=kwargs.get('color', 'k'), lw=0, clip_on=False)
+    l_arrow = .1
+    pts = np.array([[x1+l_arrow*np.cos(theta), x1+l_arrow/2*np.cos(theta+np.pi/2), x1, x1+l_arrow/2*np.cos(theta-np.pi/2)],
+                    [y1+l_arrow*np.sin(theta), y1+l_arrow/2*np.sin(theta+np.pi/2), y1, y1+l_arrow/2*np.sin(theta-np.pi/2)]]).T
+    ax.add_patch(Polygon(pts, **_plot_args))
 
-    phi = np.linspace(0, 2*np.pi, 101)*10
 
-    x = np.linspace(0, L, len(phi))
-    y = np.sin(phi)
-
-    ax.plot(x, y, **_plot_args)
 
 
