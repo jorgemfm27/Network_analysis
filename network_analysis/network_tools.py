@@ -629,7 +629,7 @@ class Network():
         S11, S12, S21, S22 = extract_S_pars(M_system, Zgen=self.Zgen)
         # plot parameters
         if plot:
-            plot_dB = kw.get('plot_dB', False)
+            yscale = kw.get('yscale', 'linear')
             xscale = kw.get('xscale', 'linear')
             # plot single s parameter
             if isinstance(plot, str):
@@ -637,10 +637,11 @@ class Network():
                 s_param_dict = {'s11': S11, 's12': S12, 's21': S21, 's22': S22}
                 fig, ax = plt.subplots(figsize=(4,3))
                 s_param = np.abs(s_param_dict[plot.lower()])
-                if plot_dB:
+                if yscale == 'dB':
                     s_param = 20*np.log10(s_param)
                     set_ylabel(ax, f'$|S_{{{plot.lower().split("s")[-1]}}}|$ (dB)')
                 else:
+                    ax.set_yscale(yscale)
                     set_ylabel(ax, f'$|S_{{{plot.lower().split("s")[-1]}}}|$')
                 ax.plot(frequency, s_param)
                 ax.set_xscale(xscale)
@@ -650,11 +651,17 @@ class Network():
                 # plot all s parameters
                 fig, axs = plt.subplots(figsize=(8,5), ncols=2, nrows=2, sharex='col')#, sharey='row')
                 for ax, s_param, name in zip(axs.flatten(), [S11, S12, S21, S22], ['S_{11}', 'S_{12}', 'S_{21}', 'S_{22}']):
-                    ax.plot(frequency, np.abs(s_param))
+                    if yscale == 'dB':
+                        s_param = 20*np.log10(np.abs(s_param))
+                        set_ylabel(ax, f'$|{name}|$ (dB)')
+                    else:
+                        s_param = np.abs(s_param)
+                        ax.set_yscale(yscale)
+                        set_ylabel(ax, f'$|{name}|$')
+                    ax.plot(frequency, s_param)
                     ax.set_xscale(xscale)
                     if name in ['S_{21}', 'S_{22}']:
                         set_xlabel(ax, 'frequency', 'Hz')
-                    set_ylabel(ax, f'$|{name}|$')
                 fig.suptitle('Scattering parameters')
                 fig.tight_layout()
         return S11, S12, S21, S22
@@ -686,7 +693,7 @@ class Network():
         Z11, Z12, Z21, Z22, Zin, Zout = extract_Z_pars(M_system, ZL=Z_load)
         # plot parameters
         if plot:
-            plot_dB = kw.get('plot_dB', False)
+            yscale = kw.get('yscale', 'linear')
             xscale = kw.get('xscale', 'linear')
             # plot single z parameter
             if isinstance(plot, str):
@@ -694,10 +701,11 @@ class Network():
                 z_param_dict = {'z11': Z11, 'z12': Z12, 'z21': Z21, 'z22': Z22, 'zin': Zin, 'zout': Zout}
                 fig, ax = plt.subplots(figsize=(4,3))
                 z_param = z_param_dict[plot.lower()]
-                if plot_dB:
-                    z_param = 20*np.log10(z_param)
-                    set_ylabel(ax, f'$Z_{{{plot.lower().split("s")[-1]}}}$ (dB)')
+                if yscale == 'dB':
+                    z_param = 10*np.log10(z_param)
+                    set_ylabel(ax, f'$Z_{{{plot.lower().split("s")[-1]}}}$ (dB$\Omega$)')
                 else:
+                    ax.set_yscale(yscale)
                     set_ylabel(ax, f'$Z_{{{plot.lower().split("s")[-1]}}}$', unit='$\Omega$')
                 ax.plot(frequency, np.abs(np.real(z_param)), label='$\\mathrm{{Re}}[z]$', color='C0')
                 ax.plot(frequency, np.abs(np.imag(z_param)), label='$\\mathrm{{Im}}[z]$', color='C2')
@@ -707,14 +715,19 @@ class Network():
                 fig.tight_layout()
             else:
                 # plot all z parameters
-                fig, axs = plt.subplots(figsize=(8,5), ncols=2, nrows=2, sharex='col')#, sharey='row')
-                for ax, z_param, name in zip(axs.flatten(), [Z11, Z12, Z21, Z22], ['Z_{11}', 'Z_{12}', 'Z_{21}', 'Z_{22}']):
-                    ax.plot(frequency, np.abs(np.real(z_param)), label='$\\mathscr{{Re}}[z]$')
-                    ax.plot(frequency, np.abs(np.imag(z_param)), label='$\\mathscr{{Im}}[z]$')
-                    ax.set_yscale('log')
+                fig, axs = plt.subplots(figsize=(8,7.5), ncols=2, nrows=3, sharex='col')
+                for ax, z_param, name in zip(axs.flatten(), [Zin, Zout, Z11, Z12, Z21, Z22], ['Z_\\mathrm{in}', 'Z_\\mathrm{out}', 'Z_{11}', 'Z_{12}', 'Z_{21}', 'Z_{22}']):
+                    if yscale == 'dB':
+                        z_param = 10*np.log10(z_param)
+                        set_ylabel(ax, f'${name}$ (dB $\Omega$)')
+                    else:
+                        ax.set_yscale(yscale)
+                        set_ylabel(ax, f'${name}$', unit='$\Omega$')
+                    ax.plot(frequency, np.abs(np.real(z_param)), label='$\\mathrm{{Re}}[z]$', color='C0')
+                    ax.plot(frequency, np.abs(np.imag(z_param)), label='$\\mathrm{{Im}}[z]$', color='C2')
+                    ax.set_xscale(xscale)
                     if name in ['Z_{21}', 'Z_{22}']:
                         set_xlabel(ax, 'frequency', 'Hz')
-                    ax.set_ylabel(f'${name}$ ($\Omega$)')
                 axs[0,0].legend(frameon=False)
                 fig.suptitle('Impedance parameters')
                 fig.tight_layout()
@@ -829,14 +842,16 @@ class Network():
         time, signal_22 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_22)
         return time, signal_11, signal_12, signal_21, signal_22
 
-    def get_psd_at_node(self, frequency: list, node_idx: int = None, initial_node_temp: float = 300, plot: bool = False, add_quantum_noise : bool = False):
+    def get_psd_at_node(self, frequency: list, node_idx: int = None, initial_node_temp: float = 300, plot: bool = False, add_quantum_noise : bool = False, **kw):
         '''
         Calculate the cascaded power spectral density from all finite temperature elements in the network.
 
         Args:
-            frequency : frequency array over which to evaluate psd
-            node_idx  : node of circuit.
-            plot      : plot psd at avery node until node_idx
+            frequency         : frequency array over which to evaluate psd
+            node_idx          : node of circuit.
+            initial_node_temp : temperature at input of the network (node 0)
+            add_quantum_noise : include noise from quantum fluctuations
+            plot              : plot psd at avery node until node_idx
         '''
         # default to last node
         if node_idx is None:
@@ -901,6 +916,12 @@ class Network():
             if plot:
                 ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=cmap(norm(_node_idx)))
         if plot:
+            # add a label to plot
+            label_tuple = kw.get('label', None)
+            if label_tuple:
+                name, temperature = label_tuple
+                axt.axhline(temperature, color='0.8', ls='--')
+                axt.text(frequency.max(), temperature, name, va='bottom', ha='right', color='0.8')
             ax.legend(frameon=False, loc=2, bbox_to_anchor=(1.2, 1))
             _update_temperature_axis()
         else:
@@ -1124,8 +1145,8 @@ class Network():
                 ax.plot([xij-.05, xij-.05], [-.25, -.95], color='k', solid_capstyle='round', linewidth=2, clip_on=False)
                 ax.plot([xij+.05, xij+.05], [-.25, -.95], color='k', solid_capstyle='round', linewidth=2, clip_on=False)
                 ax.text(xij, -.1, quantity_to_string(M, 'H'), va='bottom', ha='center', color='gray', fontsize=8)
-                ax.text(xij-.5, -.6, quantity_to_string(L1, 'H'), va='center', ha='right', color='gray')
-                ax.text(xij+.5, -.6, quantity_to_string(L2, 'H'), va='center', ha='left', color='gray')
+                ax.text(xij-.5, -.6, quantity_to_string(L1, 'H'), va='center', ha='right', color='gray', fontsize=8)
+                ax.text(xij+.5, -.6, quantity_to_string(L2, 'H'), va='center', ha='left', color='gray', fontsize=8)
             # plot capacitively coupled resonator
             elif name == 'cap_resonator':
                 ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
