@@ -9,34 +9,70 @@ from scipy import constants
 
 
 def Z_capacitor(Freq: np.array, C: float):
+    '''
+    Impedance of capacitor.
+    Args:
+        Freq : frequency in Hz
+        C    : capacitance in F
+    '''
     assert len(Freq.shape), 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = -1j/(w*C)
     return Z_in
 
 def Z_inductor(Freq: np.array, L: float):
+    '''
+    Impedance of inductor.
+    Args:
+        Freq : frequency in Hz
+        L    : inductance in H
+    '''
     assert len(Freq.shape), 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = 1j*w*L
     return Z_in
 
 def Z_resistor(Freq: np.array, R: float):
+    '''
+    Impedance of resistor.
+    Args:
+        Freq : frequency in Hz
+        R    : resistance in Ohms
+    '''
     assert len(Freq.shape), 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = np.ones(w.shape, dtype=np.complex_)*R
     return Z_in
 
 def Z_term_transline(Freq: np.array, l: float, v: float, Z0: float, ZL: float = 0):
+    '''
+    Input impedance of terminated transmission line.
+    Args:
+        length : length of transmission line in meters
+        v      : speed of light in transmission line in m/s
+        Z0     : characteristic impedance of transmission line in Ohms
+        ZL     : (termination) load impedance in Ohms
+    '''
     assert len(Freq.shape), 'Frequency should be given as 1D array'
     beta = 2*np.pi*Freq/v
     Z_in = Z0*( ZL + 1j*Z0*np.tan(beta*l) )/( Z0 + 1j*ZL*np.tan(beta*l) )
     return Z_in
 
 def Z_parallel(Za: np.array, Zb: np.array):
+    '''
+    Effective impedance of two parallel impedances.
+    Args:
+        Za/Zb : impedance of parallel elements
+    '''
     Z_par = Za*Zb/(Za+Zb)
     return Z_par
 
 def M_series_impedance(Z: np.array):
+    '''
+    ABCD matrix for a series impedance.
+    Args:
+        Z : impedance of element in series
+    '''
     assert len(Z.shape), 'Impedance should be given as 1D array'
     M = np.zeros((len(Z), 2, 2), dtype=np.complex_)
     for i in range(len(Z)):
@@ -45,6 +81,11 @@ def M_series_impedance(Z: np.array):
     return M
 
 def M_parallel_impedance(Z: np.array):
+    '''
+    ABCD matrix for a parallel impedance.
+    Args:
+        Z : impedance of element in parallel
+    '''
     assert len(Z.shape), 'Impedance should be given as 1D array'
     M = np.zeros((len(Z), 2, 2), dtype=np.complex_)
     for i in range(len(Z)):
@@ -53,6 +94,14 @@ def M_parallel_impedance(Z: np.array):
     return M
 
 def M_series_transline(Freq: np.array, l: float, v: float, Z0: float):
+    '''
+    ABCD matrix for a series transmission line.
+    Args:
+        Freq   : frequency in Hz
+        length : length of transmission line in meters
+        v      : speed of light in transmission line in m/s
+        Z0     : characteristic impedance of transmission line in Ohms
+    '''
     assert len(Freq.shape), 'Frequency should be given as 1D array'
     beta = 2*np.pi*Freq/v
     M = np.zeros((len(beta), 2, 2), dtype=np.complex_)
@@ -63,7 +112,7 @@ def M_series_transline(Freq: np.array, l: float, v: float, Z0: float):
 
 def M_inductively_coupled_impedance(Freq: np.array, Z: float, L1: float, L2: float, M:float):
     '''
-    An ABCD matrix modeling transmission through a parallel incuctively coupled impedance Z
+    ABCD matrix of a parallel impedance that is mutual iductively coupled:
          _________
     ----|--mmm----|-----
         |  mmm    |
@@ -73,6 +122,12 @@ def M_inductively_coupled_impedance(Freq: np.array, Z: float, L1: float, L2: flo
         | |_|     |
         |  |      |
         |__V______|
+    Args:
+        Freq : frequency in Hz
+        Z    : impedance of parallel component
+        L1   : inductance of main line
+        L2   : inductance of impedance line
+        M    : mutual inductance between inductors
     '''
     w = 2*np.pi*Freq
     Z_in = 1j*w*L1 + (1j*w*M)**2 / (Z+1j*w*L2)
@@ -82,13 +137,19 @@ def M_inductively_coupled_impedance(Freq: np.array, Z: float, L1: float, L2: flo
 
 def M_transformer(Freq: np.array, L1: float, L2: float, M: float):
     '''
-    An ABCD matrix modeling a transformer:
+    ABCD matrix of a series transformer:
             M
     o----| || |-----o
          3 || 3
      L1  3 || 3  L2
          3 || 3
          | || |
+    Args:
+        Freq : frequency in Hz
+        Z    : impedance of parallel component
+        L1   : inductance of main line
+        L2   : inductance of impedance line
+        M    : mutual inductance between inductors
     '''
     # T network transformation
     La = L1-M
@@ -107,13 +168,17 @@ def M_transformer(Freq: np.array, L1: float, L2: float, M: float):
 
 def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
     '''
-    An ABCD matrix for a standard Pi attenuator circuit:
+    ABCD matrix of a standard Pi attenuator circuit:
            R2       
     ---|--WWWW--|---
        Z        Z   
     R1 Z        Z R1
        |        |   
     ----------------
+    Args:
+        Freq    : frequency in Hz
+        attn_dB : power attenuation in dB
+        Z0      : characteristic impedance in Ohms
     '''
     assert len(Freq.shape), 'Frequency should be given as 1D array'
     assert attn_dB <=40, 'Attenuation must be at most 40 dB'
@@ -126,7 +191,7 @@ def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
     else:
         R1 = Z0*((attn+1)/(attn-1))
         R2 = Z0/2*(attn-1/attn)
-        # ABCD matrix coeficients
+        # ABCD matrix coefficients
         A = 1 + R2/R1
         B = R2
         C = 2/R1 + R2/(R1**2)
@@ -142,6 +207,10 @@ def M_amplifier(Freq: np.array, gain_dB: float, Z0:float):
     An ABCD matrix for an amplifier.
     (Using a pi attenuator network with negative attenuation. 
      May lord have mercy on us...)
+    Args:
+        Freq    : frequency in Hz
+        gain_dB : power gain in dB
+        Z0      : characteristic impedance in Ohms
     '''
     assert len(Freq.shape), 'Frequency should be given as 1D array'
     assert gain_dB <=40, 'Gain must be at most 40 dB'
@@ -149,7 +218,7 @@ def M_amplifier(Freq: np.array, gain_dB: float, Z0:float):
     gain = 10**(-gain_dB/20)
     R1 = Z0*((gain+1)/(gain-1))
     R2 = Z0/2*(gain-1/gain)
-    # ABCD matrix coeficients
+    # ABCD matrix coefficients
     A = 1 + R2/R1
     B = R2
     C = 2/R1 + R2/(R1**2)
@@ -161,6 +230,11 @@ def M_amplifier(Freq: np.array, gain_dB: float, Z0:float):
     return M
 
 def multiply_matrices(M_list):
+    '''
+    Method used to concatenate a series of ABCD matrices.
+    Args:
+        M_list : List of ABCD matrix instances
+    '''
     for i, m in enumerate(M_list):
         assert len(m.shape) == 3 and m.shape[1:]==(2,2), f'M_list[{i}] must have shape (n, 2, 2)'
     # Initialize the result as the first array
@@ -171,6 +245,13 @@ def multiply_matrices(M_list):
     return result
 
 def extract_S_pars(M, Zgen):
+    '''
+    Method used to calculate scattering parameters from an ABCD matrix.
+    (Pozar page 192)
+    Args:
+        M    : ABCD matrix used
+        Zgen : port impedance used to compute scattering coefficients
+    '''
     _shape = M.shape
     assert len(_shape) == 3 and _shape[1:]==(2,2), 'M should have shape (n, 2, 2)'
     A, B, C, D = M[:,0,0], M[:,0,1], M[:,1,0], M[:,1,1]
@@ -182,6 +263,14 @@ def extract_S_pars(M, Zgen):
     return S11, S12, S21, S22
 
 def extract_Z_pars(M, ZL):
+    '''
+    Method used to calculate impedance matrix parameters 
+    as well as input/ouput impedance from an ABCD matrix.
+    (Pozar page 192)
+    Args:
+        M  : ABCD matrix used
+        ZL : load impedance used to compute input/output impedance coefficients
+    '''
     _shape = M.shape
     assert len(_shape) == 3 and _shape[1:]==(2,2), 'M should have shape (n, 2, 2)'
     # Compute Z matrix
@@ -195,6 +284,13 @@ def extract_Z_pars(M, ZL):
     return Z11, Z12, Z21, Z22, Zin, Zout
 
 def get_fft_from_pulse(time_axis, pulse):
+    '''
+    Method used to compute the FFT and correspoding frequency axis
+    from a pulse in the time domain.
+    Args:
+        time_axis : time coordinates of pulse
+        pulse     : pulse coordinates 
+    '''
     # compute frequency axis
     dt = time_axis[1]-time_axis[0]
     n = time_axis.shape[-1]
@@ -204,6 +300,13 @@ def get_fft_from_pulse(time_axis, pulse):
     return freq_axis, fft
 
 def get_pulse_from_fft(freq_axis, fft):
+    '''
+    Method used to compute a pulse in the time domain 
+    from a FFT and corresponding frequency axis.
+    Args:
+        freq_axis : frequency coordinates of FFT
+        fft       : fast Fourier transform coefficients
+    '''
     # compute frequency axis
     df = freq_axis[1]-freq_axis[0]
     n = freq_axis.size
@@ -216,6 +319,18 @@ def get_pulse_from_fft(freq_axis, fft):
     return time_axis, pulse
 
 def square_pulse(time, pulse_duration, frequency, pulse_pad=0):
+    '''
+    Generate a square pulse with a carrier frequency:
+                  ____________________
+    <-pulse_pad->|                    |
+    _____________|<--pulse_duration-->|____________
+    
+    Args: 
+        time           : time domain axis of pulse
+        pulse_duration : duration of square pulse
+        frequency      : carrier frequency of pulse
+        pulse_pad      : zero amplitude padding of pulse
+    '''
     return np.sin(time*frequency*2*np.pi+np.pi/5)*(np.heaviside(time-pulse_pad, 1)-np.heaviside(time-pulse_duration-pulse_pad, 1))
 
 def Vp_from_PdBm(P_dBm, R=50):
@@ -232,7 +347,9 @@ def PdBm_from_Vp(Vp, R=50):
     return 10*(np.log10(Vrms**2/R)+3)
 
 def _solve_nan(array):
-    # interpolate nan values in array
+    '''
+    Interpolate nan values in array.
+    '''
     idxs_nan = np.where(np.isnan(array))[0]
     for i in idxs_nan:
         array[i] = np.mean([array[[i-1, i+1]]])
@@ -240,10 +357,11 @@ def _solve_nan(array):
 
 def PSD_thermal(f, T):
     '''
-    Power spectral density at temperature T in units W/Hz.
+    Power spectral density describing quantum 
+    Johnson-Nyquist at temperature T in units W/Hz.
     Args:
-        T : temperature in Kelvin.
-        f : frequency in Hz.
+        f : frequency in Hz
+        T : temperature in Kelvin
     '''
     h = constants.h
     kB = constants.Boltzmann
@@ -308,7 +426,6 @@ class Network():
     def add_capacitance(self, C: float, element_type: str, element_idx=None):
         '''
         Add a capacitance to the network.
-
         Args:
             C            : capacitance (Farads)
             element_type : arrangement of circuit element ("series" or "parallel")
@@ -332,7 +449,6 @@ class Network():
     def add_inductance(self, L: float, element_type: str, element_idx=None):
         '''
         Add an inductance to the network.
-
         Args:
             L            : Inductance (Henry)
             element_type : arrangement of circuit element ("series" or "parallel")
@@ -356,7 +472,6 @@ class Network():
     def add_resistor(self, R: float, element_type: str, element_idx=None):
         '''
         Add a resistor to the network.
-
         Args:
             R            : Resistance (Ohms)
             element_type : arrangement of circuit element ("series" or "parallel")
@@ -380,7 +495,6 @@ class Network():
     def add_transmission_line(self, length: float, Z0: float, phase_velocity: float, element_idx=None):
         '''
         Add a series transmission line element to network.
-
         Args:
             length         : length of transmission line (meters)
             Z0             : characteristic impedance of transmission line (Ohms)
@@ -397,7 +511,6 @@ class Network():
     def add_parallel_transmission_line(self, length: float, Z0: float, phase_velocity: float, Z_load: float, element_idx=None):
         '''
         Add a parallel transmission line element to network.
-
         Args:
             length         : length of transmission line (meters)
             Z0             : characteristic impedance of transmission line (Ohms)
@@ -415,7 +528,6 @@ class Network():
     def add_transformer(self, L1: float, L2: float, M: float, element_idx=None):
         '''
         Add a transformer element to the network:
-
         Args:
             L1          : Inductance on left side (Henry)
             L2          : Inductance on right side (Henry)
@@ -433,7 +545,6 @@ class Network():
     def add_capacitively_coupled_hanger(self, length: float, Z0: float, phase_velocity: float, Z_termination: float, C_coupling: float, element_idx=None):
         '''
         Add a parallel terminated transmission line in series with a capacitor element to network.
-
         Args:
             length         : length of transmission line (meters)
             Z0             : characteristic impedance of transmission line (Ohms)
@@ -463,7 +574,6 @@ class Network():
     def add_inductively_coupled_hanger(self, length: float, Z0: float, phase_velocity: float, Z_termination: float, L_line: float, L_hanger: float, M_inductance: float, element_idx=None):
         '''
         Add a parallel terminated transmission line inductively coupled to main line of network.
-
         Args:
             length         : length of transmission line (meters)
             Z0             : characteristic impedance of transmission line (Ohms)
@@ -498,7 +608,6 @@ class Network():
         '''
         Add an attenuator to the network.
         (This component is implemented as a pi-network of resistors).
-
         Args:
             attn_dB       : power attenuation of attenuator (dB)
             Z0            : characteristic impedance of attenuator (Ohms)
@@ -516,7 +625,6 @@ class Network():
         '''
         Add an amplifier to the network.
         (This component is implemented as a pi-network of resistors).
-
         Args:
             gain_dB       : power gain of amplifier (dB)
             Z0            : characteristic impedance of attenuator (Ohms)
@@ -534,7 +642,6 @@ class Network():
         '''
         Add a component from S matrix data available in .s2p.
         See .\circuit_components\ for avaliable components.
-
         Args:
             name          : name of component (must match name of file found in the directory)
             temperature_K : temperature of component (Kelvin)
@@ -609,7 +716,6 @@ class Network():
     def get_S_parameters(self, frequency: list, plot: bool = False, **kw):
         '''
         Compute the scattering parameters of the network over a frequency range.
-
         Args:
             frequency : frequency array over which to evaluate scattering params
             plot      : plot scattering parameters
@@ -669,7 +775,6 @@ class Network():
     def get_Z_parameters(self, frequency: list, Z_load: float = None, plot: bool = False, **kw):
         '''
         Compute the Z parameters of the network over a frequency range.
-
         Args:
             frequency : frequency array over which to evaluate scattering params
             Z_load    : load impedance used to compute input and output impedance of network
@@ -737,7 +842,6 @@ class Network():
         '''
         Compute the voltage and current phasors at a node of the network for a given input field,
         on port 0 and a load impedance <Z_load> on the output port.
-
         Args:
             node_idx : node of circuit.
             in_freq  : input signal phasor frequency (Hz).
@@ -775,7 +879,6 @@ class Network():
         '''
         Compute the voltage and current phasors at a node of the network for a given input field,
         on port 0 and a load impedance <Z_load> on the output port.
-
         Args:
             node_idx     : node of circuit.
             frequency    : input signal frequency (Hz).
@@ -820,7 +923,6 @@ class Network():
         '''
         Get the response of the network to an input signal.
         Performed by computing the scattered signal using S matrix of the network.
-
         Args:
             time   : frequency array over which to evaluate scattering params
             signal : load impedance used to compute input and output impedance of network
@@ -845,7 +947,6 @@ class Network():
     def get_psd_at_node(self, frequency: list, node_idx: int = None, initial_node_temp: float = 300, plot: bool = False, add_quantum_noise : bool = False, **kw):
         '''
         Calculate the cascaded power spectral density from all finite temperature elements in the network.
-
         Args:
             frequency         : frequency array over which to evaluate psd
             node_idx          : node of circuit.
@@ -932,7 +1033,6 @@ class Network():
         Calculate spectral density of squared voltage 
         in units of V^2/Hz (Volt squared per Hertz).
         (used for Fermi's golden rule).
-
         Args:
             frequency : frequency, should be given as array
             Z_load    : load impedance at input of network
@@ -965,7 +1065,7 @@ class Network():
         '''
         Calculate spectral density of squared current
         in units of A^2/Hz (Ampere squared per Hertz).
-        (used for Fermi's golden rule).
+        (used for Fermi's golden rule)
         Args:
             frequency : frequency, should be given as array
             Z_load    : load impedance at input of network
@@ -998,7 +1098,7 @@ class Network():
         '''
         Calculate spectral density of squared flux from mutual inductive coupling
         in units of phi0^2/Hz (flux quantum squared per Hertz).
-        (used for Fermi's golden rule).
+        (used for Fermi's golden rule)
         Args:
             frequency : frequency, should be given as array
             M_henry   : Mutual inductance of line
@@ -1429,7 +1529,6 @@ def parse_s2p(file_path):
             s2p_data["12"].append(complex(values[5], values[6]))
             s2p_data["22"].append(complex(values[7], values[8]))
     return s2p_data
-
 
 
 # end
