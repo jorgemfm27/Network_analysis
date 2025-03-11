@@ -293,10 +293,11 @@ def get_fft_from_pulse(time_axis, pulse):
     '''
     # compute frequency axis
     dt = time_axis[1]-time_axis[0]
-    n = time_axis.shape[-1]
+    n = time_axis.size
     freq_axis = np.fft.fftfreq(n, d=dt)
     # compute fft
-    fft = np.fft.fft(pulse)
+    fft = np.fft.fft(np.flip(pulse))
+    # fft = np.fft.fft((pulse))
     return freq_axis, fft
 
 def get_pulse_from_fft(freq_axis, fft):
@@ -312,10 +313,11 @@ def get_pulse_from_fft(freq_axis, fft):
     n = freq_axis.size
     time_axis = np.fft.fftfreq(n, d=df)
     # compute inverse fft
-    pulse = np.fft.ifft(fft)
-    # sort vectors
+    pulse = np.flip(np.fft.ifft(fft))
+    # pulse = np.fft.ifft(fft)
+    # sort time axis
     time_axis = np.fft.fftshift(time_axis)
-    time_axis -= np.min(time_axis)
+    time_axis -= time_axis.min()
     return time_axis, pulse
 
 def square_pulse(time, pulse_duration, frequency, pulse_pad=0):
@@ -640,7 +642,7 @@ class Network():
 
     def add_custom_component(self, name: str, temperature_K: float, element_idx=None, plot_params: bool = False):
         '''
-        Add a component from S matrix data available in .s2p.
+        Add a component from S matrix data available in .s2p file.
         See .\circuit_components\ for avaliable components.
         Args:
             name          : name of component (must match name of file found in the directory)
@@ -648,16 +650,15 @@ class Network():
             element_idx   : position index in network (used only to replace existing elements)
             plot_params   : plot parameters used to model component.
         '''
+        # Parse s2p file data to scattering paramaters
         component_data_file = os.path.abspath(os.path.join(__file__, '..', 'circuit_components', f'{name}.s2p'))
-        # try:
         data = parse_s2p(component_data_file)
-
+        # Plot data from s2p file
         if data['param_type'].lower() == 's':
             freq = np.array(data['frequency'])
             S11 = np.array(data['11'])
-            # S12 = np.array(data['12']) # we do this to avoid numerical instabilities
-            S12 = np.array(data['21'])
-            S21 = np.array(data['21'])
+            S12 = np.array(data['21']) # we make s21 = s12 to avoid numerical instabilities
+            S21 = np.array(data['21']) # (this is only a good assumption for reciprocal components)
             S22 = np.array(data['22'])
             Z0 = float(data['char_imp'])
             # convert s params to ABCD params
@@ -669,10 +670,10 @@ class Network():
                 fig, axs = plt.subplots(figsize=(8, 5),ncols=2, nrows=2, sharex='col')
                 # plot S params mag
                 axs = axs.flatten()
-                axs[0].plot(freq, np.abs(S11), color='C0', alpha=1, ls='-', zorder=+1)
-                axs[1].plot(freq, np.abs(S12), color='C0', alpha=1, ls='-', zorder=+1)
-                axs[2].plot(freq, np.abs(S21), color='C0', alpha=1, ls='-', zorder=+1)
-                axs[3].plot(freq, np.abs(S22), color='C0', alpha=1, ls='-', zorder=+1)
+                axs[0].plot(freq, 20*np.log10(np.abs(S11)), color='C0', alpha=1, ls='-', zorder=+1)
+                axs[1].plot(freq, 20*np.log10(np.abs(S12)), color='C0', alpha=1, ls='-', zorder=+1)
+                axs[2].plot(freq, 20*np.log10(np.abs(S21)), color='C0', alpha=1, ls='-', zorder=+1)
+                axs[3].plot(freq, 20*np.log10(np.abs(S22)), color='C0', alpha=1, ls='-', zorder=+1)
                 # # plot S params phase
                 # axt = [ax.twinx() for ax in axs]
                 # axt[0].plot(freq, np.angle(S11), color='C1', alpha=.5, ls='--', zorder=-1)
@@ -681,7 +682,10 @@ class Network():
                 # axt[3].plot(freq, np.angle(S22), color='C1', alpha=.5, ls='--', zorder=-1)
                 set_xlabel(axs[2], 'frequency', unit='Hz')
                 set_xlabel(axs[3], 'frequency', unit='Hz')
-
+                set_ylabel(axs[0], '|S_{11}|', unit='dB')
+                set_ylabel(axs[1], '|S_{12}|', unit='dB')
+                set_ylabel(axs[2], '|S_{21}|', unit='dB')
+                set_ylabel(axs[3], '|S_{22}|', unit='dB')
         # Assemble M matrix function
         def M_CC(frequency):
             # interpolate for different frequency values
@@ -737,6 +741,7 @@ class Network():
         if plot:
             yscale = kw.get('yscale', 'linear')
             xscale = kw.get('xscale', 'linear')
+            plot_phase = kw.get('plot_phase', False)
             # plot single s parameter
             if isinstance(plot, str):
                 assert plot.lower() in ['s11', 's12', 's21', 's22']
@@ -752,7 +757,14 @@ class Network():
                 ax.plot(frequency, s_param)
                 ax.set_xscale(xscale)
                 set_xlabel(ax, 'frequency', 'Hz')
+                if plot_phase:
+                    axt = ax.twinx()
+                    axt.plot(frequency, np.angle(s_param_dict[plot.lower()]), ls='--', color='C2', alpha=.5, zorder=-1)
+                    set_ylabel(axt, 'phase', unit='rad')
+                    axt.set_yticks([-np.pi, 0, np.pi])
+                    axt.set_yticklabels(['$-\\pi$', '0', '$\\pi$'])
                 fig.tight_layout()
+                ax.set_title('Scattering parameter')
             else:
                 # plot all s parameters
                 fig, axs = plt.subplots(figsize=(8,5), ncols=2, nrows=2, sharex='col')#, sharey='row')
@@ -919,7 +931,7 @@ class Network():
             move_subplot(ax, -.047, +1.5/5, scale_x=1+(n_nodes-1)*1.5, scale_y=5)
         return pnode_dBm
 
-    def get_signal_response(self, time: list, signal: list):
+    def get_signal_response(self, time: list, signal: list, plot: bool = False, **kw):
         '''
         Get the response of the network to an input signal.
         Performed by computing the scattered signal using S matrix of the network.
@@ -938,10 +950,49 @@ class Network():
         # compute scattered spectrum
         fft_11, fft_12, fft_21, fft_22 = s11*fft, s12*fft, s21*fft, s22*fft
         # recover signal in time domain
-        time, signal_11 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_11)
-        time, signal_12 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_12)
-        time, signal_21 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_21)
-        time, signal_22 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_22)
+        _time, signal_11 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_11)
+        _time, signal_12 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_12)
+        _time, signal_21 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_21)
+        _time, signal_22 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_22)
+        # assert the signal is real (apart from numerical errors)
+        # assert all(np.imag(signal_11)<1e-6)
+        # assert all(np.imag(signal_12)<1e-6)
+        # assert all(np.imag(signal_21)<1e-6)
+        # assert all(np.imag(signal_22)<1e-6)
+        # plot input and output signal
+        if plot:
+            yscale = kw.get('yscale', 'linear')
+            xscale = kw.get('xscale', 'linear')
+            # plot single s parameter
+            if isinstance(plot, str):
+                assert plot.lower() in ['s11', 's12', 's21', 's22']
+                signal_dict = {'s11': signal_11, 's12': signal_12, 's21': signal_21, 's22': signal_22}
+                fig, ax = plt.subplots(figsize=(4,3))
+                output_signal = signal_dict[plot.lower()]
+                # plot input signal
+                ax.plot(time, signal, color='gray', alpha=.5, label='input signal')
+                # plot output signal
+                ax.plot(_time, np.real(output_signal), label='output signal')
+                ax.set_xscale(xscale)
+                ax.set_yscale(yscale)
+                set_xlabel(ax, 'time', unit='s')
+                set_ylabel(ax, f'$\\mathrm{{signal}}_{{{plot.lower().split("s")[-1]}}}$')
+                ax.set_title('Scattered signal')
+            else:
+                # plot all s parameters
+                fig, axs = plt.subplots(figsize=(8,5), ncols=2, nrows=2, sharex='col')
+                for ax, output_signal, name in zip(axs.flatten(), [signal_11, signal_12, signal_21, signal_22], ['11', '12', '21', '22']):
+                    # plot input signal
+                    ax.plot(time, signal, color='gray', alpha=.5, label='input signal')
+                    # plot output signal
+                    ax.plot(time, np.real(output_signal), label='output signal')
+                    ax.set_xscale(xscale)
+                    ax.set_yscale(yscale)
+                    set_ylabel(ax, f'$\\mathrm{{signal}}_{{{name}}}$')
+                    if name in ['21', '22']:
+                        set_xlabel(ax, 'time', unit='s')
+                fig.suptitle('Scattered signal')
+            fig.tight_layout()
         return time, signal_11, signal_12, signal_21, signal_22
 
     def get_psd_at_node(self, frequency: list, node_idx: int = None, initial_node_temp: float = 300, plot: bool = False, add_quantum_noise : bool = False, **kw):
