@@ -93,8 +93,8 @@ def plot_attenuator(x0, y0, h=.1, l=.3, attn_dB=None, **kwargs):
     rectangle = FancyBboxPatch((x0-l/2, y0-h/2), l, h, **_plot_args)
     # Plot rotated inductor
     ax.add_patch(rectangle)
-    # if attn_dB:
-    ax.text(x0, y0, f'-{attn_dB:.0f} dB', va='center', ha='center', zorder=3, size=12, color='w')
+    if attn_dB:
+        ax.text(x0, y0, f'-{attn_dB:.0f} dB', va='center', ha='center', zorder=3, size=12, color='w')
 
 def plot_amplifier(x0, y0, h=.1, l=.3, gain_dB=None, **kwargs):
     '''

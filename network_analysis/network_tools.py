@@ -130,9 +130,9 @@ def M_inductively_coupled_impedance(Freq: np.array, Z: float, L1: float, L2: flo
         M    : mutual inductance between inductors
     '''
     w = 2*np.pi*Freq
-    Z_in = 1j*w*L1 + (1j*w*M)**2 / (Z+1j*w*L2)
+    Z_ = 1j*w*L1 + (1j*w*M)**2 / (Z+1j*w*L2)
     # Compute ABCD matrix
-    M = M_series_impedance(Z_in)
+    M = M_series_impedance(Z_)
     return M
 
 def M_transformer(Freq: np.array, L1: float, L2: float, M: float):
@@ -357,10 +357,10 @@ def _solve_nan(array):
         array[i] = np.mean([array[[i-1, i+1]]])
     return array
 
-def PSD_thermal(f, T):
+def PSD_thermal_quantum(f, T):
     '''
-    Power spectral density describing quantum 
-    Johnson-Nyquist at temperature T in units W/Hz.
+    Power spectral density describing thermal and quantum 
+    (Johnson-Nyquist) at temperature T in units W/Hz.
     Args:
         f : frequency in Hz
         T : temperature in Kelvin
@@ -375,7 +375,7 @@ def PSD_thermal(f, T):
 
 def PSD_quantum(f):
     '''
-    Power spectral density of quantum noise (single-sided) in units W/Hz.
+    Power spectral density of quantum (Nyquist) noise in units W/Hz.
     Args:
         T : temperature in Kelvin.
         f : frequency in Hz.
@@ -383,6 +383,22 @@ def PSD_quantum(f):
     h = constants.h
     # power spectral density (single sided)
     PSD = h*f/2 * (np.sign(f)+1)/2
+    return PSD
+
+def PSD_thermal_bose(f, T):
+    '''
+    Power spectral density describing thermal 
+    (Johnson) noise at temperature T in units W/Hz.
+    Args:
+        f : frequency in Hz
+        T : temperature in Kelvin
+    '''
+    h = constants.h
+    kB = constants.Boltzmann
+    # Bose-Einstein distribution
+    eta = (h*f/(kB*T))/(np.exp(h*f/(kB*T))-1)
+    # power spectral density
+    PSD = 4*kB*T*eta
     return PSD
 
 ##############################################
@@ -995,21 +1011,21 @@ class Network():
             fig.tight_layout()
         return time, signal_11, signal_12, signal_21, signal_22
 
-    def get_psd_at_node(self, frequency: list, node_idx: int = None, initial_node_temp: float = 300, plot: bool = False, add_quantum_noise : bool = False, **kw):
+    def get_psd_at_node(self, frequency: list, node_idx: int = None, initial_node_temp: float = 300, plot: bool = False, add_rates : bool = False, **kw):
         '''
         Calculate the cascaded power spectral density from all finite temperature elements in the network.
         Args:
             frequency         : frequency array over which to evaluate psd
             node_idx          : node of circuit.
             initial_node_temp : temperature at input of the network (node 0)
-            add_quantum_noise : include noise from quantum fluctuations
+            add_rates         : include noise from both absorption and emission
             plot              : plot psd at avery node until node_idx
         '''
         # default to last node
         if node_idx is None:
             node_idx = len(self.elements)
         # Start with a 300 K PSD
-        PSD = PSD_thermal(frequency, T=initial_node_temp)
+        PSD = PSD_thermal_quantum(frequency, T=initial_node_temp)
         # # Quantum coherent state fluctuations
         # PSD_Q = PSD_quantum(frequency, self.Zgen)
         if plot:
@@ -1040,30 +1056,28 @@ class Network():
                 attn_dB = self.element_properties[idx]['attn_dB']
                 attn = 10**(-attn_dB/10) # here we should compute attenuation in power
                 # cascaded attenuation
-                PSD = (1-attn)*PSD_thermal(frequency, temperature_K) + attn*PSD
-                # quantum noise
-                if add_quantum_noise:
-                    # PSD += (1-attn)*PSD_quantum(frequency)
-                    PSD += PSD_quantum(frequency)
+                PSD = (1-attn)*PSD_thermal_quantum(frequency, temperature_K) + attn*PSD
+                # add both emission and absorption rate
+                if add_rates:
+                    PSD += (1-attn)*PSD_thermal_quantum(-frequency, temperature_K)
             elif element == 'amplifier':
                 temperature_K = self.element_properties[idx]['temperature_K']
                 gain_dB = self.element_properties[idx]['gain_dB']
                 gain = 10**(gain_dB/10) # here we should compute gain in power
                 # cascaded attenuation
-                PSD = PSD_thermal(frequency, temperature_K) + gain*PSD
-                # quantum noise
-                if add_quantum_noise:
-                    PSD += PSD_quantum(frequency)
+                PSD = PSD_thermal_quantum(frequency, temperature_K) + gain*PSD
+                # add both emission and absorption rate
+                if add_rates:
+                    PSD += PSD_thermal_quantum(-frequency, temperature_K)
             elif element == 'commercial_component':
                 temperature_K = self.element_properties[idx]['temperature_K']
                 # Get attenuation of component versus frequency
                 _, _, s21, _ = extract_S_pars(self.elements[idx][1](frequency), Zgen=self.Zgen)
                 attn = np.abs(s21)**2
-                PSD = (1-attn)*PSD_thermal(frequency, temperature_K) + attn*PSD
-                # quantum noise
-                if add_quantum_noise:
-                    # PSD += (1-attn)*PSD_quantum(frequency)
-                    PSD += PSD_quantum(frequency)
+                PSD = (1-attn)*PSD_thermal_quantum(frequency, temperature_K) + attn*PSD
+                # add both emission and absorption rate
+                if add_rates:
+                    PSD += (1-attn)*PSD_thermal_quantum(-frequency, temperature_K)
             # plot current PSD
             if plot:
                 ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=cmap(norm(_node_idx)))
@@ -1079,7 +1093,7 @@ class Network():
         else:
             return PSD
 
-    def get_svv_at_output(self, frequency: list, Z_load: float = None, add_quantum_noise: bool = False, plot: bool = False):
+    def get_svv_at_output(self, frequency: list, Z_load: float = None, add_rates: bool = False, plot: bool = False):
         '''
         Calculate spectral density of squared voltage 
         in units of V^2/Hz (Volt squared per Hertz).
@@ -1096,7 +1110,7 @@ class Network():
             Z_load = self.Zgen
         # get power spectral density
         n_elements = len(self.elements)
-        psd = self.get_psd_at_node(node_idx=n_elements, frequency=frequency, add_quantum_noise=add_quantum_noise)
+        psd = self.get_psd_at_node(node_idx=n_elements, frequency=frequency, add_rates=add_rates)
         # calculate output impedance
         _, _, _, _, _, zout = self.get_Z_parameters(frequency=frequency, Z_load=Z_load)
         # calculate Svv
@@ -1112,7 +1126,7 @@ class Network():
             ax.set_title('Voltage spectral density')
         return s_vv
 
-    def get_sii_at_output(self, frequency: list, Z_load: float = None, add_quantum_noise: bool = False, plot: bool = False):
+    def get_sii_at_output(self, frequency: list, Z_load: float = None, add_rates: bool = False, plot: bool = False):
         '''
         Calculate spectral density of squared current
         in units of A^2/Hz (Ampere squared per Hertz).
@@ -1129,7 +1143,7 @@ class Network():
             Z_load = self.Zgen
         # get power spectral density
         n_elements = len(self.elements)
-        psd = self.get_psd_at_node(node_idx=n_elements, frequency=frequency, add_quantum_noise=add_quantum_noise)
+        psd = self.get_psd_at_node(node_idx=n_elements, frequency=frequency, add_rates=add_rates)
         # calculate output impedance
         _, _, _, _, _, zout = self.get_Z_parameters(frequency=frequency, Z_load=Z_load)
         # calculate Sii
@@ -1145,7 +1159,7 @@ class Network():
             ax.set_title('Current spectral density')
         return s_ii
 
-    def get_spp_at_output(self, frequency: list, M_henry: float, Z_load: float = None, add_quantum_noise: bool = False, plot: bool = False):
+    def get_spp_at_output(self, frequency: list, M_henry: float, Z_load: float = None, add_rates: bool = False, plot: bool = False):
         '''
         Calculate spectral density of squared flux from mutual inductive coupling
         in units of phi0^2/Hz (flux quantum squared per Hertz).
@@ -1162,7 +1176,7 @@ class Network():
         if Z_load is None:
             Z_load = self.Zgen
         # get current spectral density
-        s_ii = self.get_sii_at_output(frequency=frequency, Z_load=Z_load, add_quantum_noise=add_quantum_noise)
+        s_ii = self.get_sii_at_output(frequency=frequency, Z_load=Z_load, add_rates=add_rates)
         # convert mutual inductance from henry (Webber/amp) to phi0/amp
         phi_0 = constants.physical_constants['mag. flux quantum'][0]
         M_phi0 = M_henry/phi_0
