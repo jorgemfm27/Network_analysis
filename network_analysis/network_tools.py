@@ -16,7 +16,7 @@ def Z_capacitor(Freq: np.array, C: float):
         Freq : frequency in Hz
         C    : capacitance in F
     '''
-    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = -1j/(w*C)
     return Z_in
@@ -28,7 +28,7 @@ def Z_inductor(Freq: np.array, L: float):
         Freq : frequency in Hz
         L    : inductance in H
     '''
-    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = 1j*w*L
     return Z_in
@@ -40,7 +40,7 @@ def Z_resistor(Freq: np.array, R: float):
         Freq : frequency in Hz
         R    : resistance in Ohms
     '''
-    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = np.ones(w.shape, dtype=np.complex_)*R
     return Z_in
@@ -54,7 +54,7 @@ def Z_term_transline(Freq: np.array, l: float, v: float, Z0: float, ZL: float = 
         Z0     : characteristic impedance of transmission line in Ohms
         ZL     : (termination) load impedance in Ohms
     '''
-    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     beta = 2*np.pi*Freq/v
     Z_in = Z0*( ZL + 1j*Z0*np.tan(beta*l) )/( Z0 + 1j*ZL*np.tan(beta*l) )
     return Z_in
@@ -74,7 +74,7 @@ def M_series_impedance(Z: np.array):
     Args:
         Z : impedance of element in series
     '''
-    assert len(Z.shape), 'Impedance should be given as 1D array'
+    assert len(Z.shape) == 1, 'Impedance should be given as 1D array'
     M = np.zeros((len(Z), 2, 2), dtype=np.complex_)
     for i in range(len(Z)):
         M[i] = np.array([[1, Z[i]],
@@ -87,7 +87,7 @@ def M_parallel_impedance(Z: np.array):
     Args:
         Z : impedance of element in parallel
     '''
-    assert len(Z.shape), 'Impedance should be given as 1D array'
+    assert len(Z.shape) == 1, 'Impedance should be given as 1D array'
     M = np.zeros((len(Z), 2, 2), dtype=np.complex_)
     for i in range(len(Z)):
         M[i] = np.array([[     1, 0],
@@ -103,7 +103,7 @@ def M_series_transline(Freq: np.array, l: float, v: float, Z0: float):
         v      : speed of light in transmission line in m/s
         Z0     : characteristic impedance of transmission line in Ohms
     '''
-    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     beta = 2*np.pi*Freq/v
     M = np.zeros((len(beta), 2, 2), dtype=np.complex_)
     for i in range(len(beta)):
@@ -181,7 +181,7 @@ def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
         attn_dB : power attenuation in dB
         Z0      : characteristic impedance in Ohms
     '''
-    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     assert attn_dB <=40, 'Attenuation must be at most 40 dB'
     w = 2*np.pi*Freq
     # attenuation linear
@@ -213,7 +213,7 @@ def M_amplifier(Freq: np.array, gain_dB: float, Z0:float):
         gain_dB : power gain in dB
         Z0      : characteristic impedance in Ohms
     '''
-    assert len(Freq.shape), 'Frequency should be given as 1D array'
+    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     assert gain_dB <=50, 'Gain must be at most 50 dB'
     # attenuation linear
     gain = 10**(-gain_dB/20)
@@ -1317,7 +1317,6 @@ class Network():
         properties[element_property] = value
         # change method
         method(element_idx=element_idx, **properties)
-
 
     def get_S_versus_parameters(self, frequency: list, values: list, element_idx: int, element_property: str, plot: bool = False, **kw):
 
