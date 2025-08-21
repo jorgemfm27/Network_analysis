@@ -52,6 +52,28 @@ def plot_inductor(x0, y0, x1, y1, w_ind=.05, lpad=0, **kwargs):
     # Plot rotated inductor
     ax.plot(X, Y, **_plot_args)
 
+def plot_junction(x0, y0, x1, y1, l_junction=.1, **kwargs):
+    '''
+    Plot junction between (x0, y0) and (x1, y1)
+    '''
+    # get current axis
+    ax = plt.gca()
+    # Plot settings
+    _plot_args = dict(color=kwargs.get('color', 'k'), lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
+    # displacement
+    dx = x1-x0
+    dy = y1-y0
+    l = np.sqrt(dx**2 + dy**2)
+    phi = np.arctan2(dy, dx)
+    # horizontal junction
+    lj = l_junction/np.sqrt(2)/2
+    x = np.array([0]+[l/2, l/2+lj, l/2-lj, l/2, l/2+lj, l/2-lj, l/2]+[l])
+    y = np.array([0]+[  0,    +lj,    -lj,   0,    -lj,    +lj,   0]+[0])
+    X = (x*np.cos(phi)-y*np.sin(phi))+x0
+    Y = (y*np.cos(phi)+x*np.sin(phi))+y0
+    # Plot rotated junction
+    ax.plot(X, Y, **_plot_args)
+
 def plot_resistor(x0, y0, x1, y1, w_ind=.05, lpad=0, **kwargs):
     '''
     Plot inductor coil between (x0, y0) and (x1, y1).
@@ -112,6 +134,42 @@ def plot_amplifier(x0, y0, h=.1, l=.3, gain_dB=None, **kwargs):
     ax.add_patch(triangle)
     # # if gain_dB:
     ax.text(x0-l/10, y0, f'{gain_dB} dB', va='center', ha='center', zorder=3, size=9, color='w')
+
+def plot_SQUID(x0, y0, x1, y1, w=0.7, l_junction=.15, **kwargs):
+    '''
+    Plot squid loop between (x0, y0) and (x1, y1).
+    Args:
+        w_ind : Width of inductor coil
+    '''
+    # get current axis
+    ax = plt.gca()
+    # Plot settings
+    _plot_args = dict(color=kwargs.get('color', 'k'), lw=kwargs.get('lw', 4), solid_capstyle='round', clip_on=False)
+    # displacement
+    dx = x1-x0
+    dy = y1-y0
+    l = np.sqrt(dx**2 + dy**2)
+    phi = np.arctan2(dy, dx)
+    # SQUID loop
+    for i in [+1, -1]:
+        x = np.array([(l-w)/2, (l-w)/2,   l/2,   l/2,   l/2,   l/2,   l/2,   l/2,   l/2, (l+w)/2, (l+w)/2,])
+        y = np.array([      0,   i*w/2, i*w/2, i*w/2, i*w/2, i*w/2, i*w/2, i*w/2, i*w/2,   i*w/2,       0,])
+        # junction arms
+        x[[3]] += np.sqrt(2)*l_junction/2
+        x[[4]] -= np.sqrt(2)*l_junction/2
+        y[[3]] += np.sqrt(2)*l_junction/2
+        y[[4]] -= np.sqrt(2)*l_junction/2
+        x[[6]] += np.sqrt(2)*l_junction/2
+        x[[7]] -= np.sqrt(2)*l_junction/2
+        y[[6]] -= np.sqrt(2)*l_junction/2
+        y[[7]] += np.sqrt(2)*l_junction/2
+        # rotate points
+        x = np.array([0]+list(x)+[l])
+        y = np.array([0]+list(y)+[0])
+        X = (x*np.cos(phi)-y*np.sin(phi))+x0
+        Y = (y*np.cos(phi)+x*np.sin(phi))+y0
+        # Plot rotated inductor
+        ax.plot(X, Y, **_plot_args)
 
 def plot_low_pass(x0, y0, h=.1, l=.35, name=None, **kwargs):
     '''

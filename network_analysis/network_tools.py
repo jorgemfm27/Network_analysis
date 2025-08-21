@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import qutip
 from scipy.optimize import minimize
 from scipy import constants
+import plotting_tools as pt
 
 
 def Z_capacitor(Freq: np.array, C: float):
@@ -213,7 +214,7 @@ def M_amplifier(Freq: np.array, gain_dB: float, Z0:float):
         Z0      : characteristic impedance in Ohms
     '''
     assert len(Freq.shape), 'Frequency should be given as 1D array'
-    assert gain_dB <=40, 'Gain must be at most 40 dB'
+    assert gain_dB <=50, 'Gain must be at most 50 dB'
     # attenuation linear
     gain = 10**(-gain_dB/20)
     R1 = Z0*((gain+1)/(gain-1))
@@ -283,7 +284,7 @@ def extract_Z_pars(M, ZL):
     Zout = Z22 - (Z12*Z21)/(Z11+ZL)
     return Z11, Z12, Z21, Z22, Zin, Zout
 
-def get_fft_from_pulse(time_axis, pulse):
+def get_fft_from_pulse(time_axis, pulse, flip=False, plot=False):
     '''
     Method used to compute the FFT and correspoding frequency axis
     from a pulse in the time domain.
@@ -296,11 +297,19 @@ def get_fft_from_pulse(time_axis, pulse):
     n = time_axis.size
     freq_axis = np.fft.fftfreq(n, d=dt)
     # compute fft
-    fft = np.fft.fft(np.flip(pulse))
-    # fft = np.fft.fft((pulse))
+    if flip:
+        pulse = np.flip(pulse)
+    fft = np.fft.fft(pulse)
+    # plot
+    if plot:
+        fig, ax = plt.subplots(figsize=(4,3))
+        ax.plot(np.sort(freq_axis), np.abs(fft[np.argsort(freq_axis)])**2)
+        ax.set_yscale('log')
+        set_xlabel(ax, 'frequency', 'Hz')
+        set_ylabel(ax, 'FFT')
     return freq_axis, fft
 
-def get_pulse_from_fft(freq_axis, fft):
+def get_pulse_from_fft(freq_axis, fft, flip=False):
     '''
     Method used to compute a pulse in the time domain 
     from a FFT and corresponding frequency axis.
@@ -313,14 +322,16 @@ def get_pulse_from_fft(freq_axis, fft):
     n = freq_axis.size
     time_axis = np.fft.fftfreq(n, d=df)
     # compute inverse fft
-    pulse = np.flip(np.fft.ifft(fft))
-    # pulse = np.fft.ifft(fft)
+    pulse = np.fft.ifft(fft)
+    if flip:
+        pulse = np.flip(pulse)
     # sort time axis
-    time_axis = np.fft.fftshift(time_axis)
+    time_axis = np.sort(time_axis)
     time_axis -= time_axis.min()
+    pulse -= pulse[0]
     return time_axis, pulse
 
-def square_pulse(time, pulse_duration, frequency, pulse_pad=0):
+def square_pulse(time, pulse_duration, frequency, pulse_pad=0, phase=0):
     '''
     Generate a square pulse with a carrier frequency:
                   ____________________
@@ -333,7 +344,7 @@ def square_pulse(time, pulse_duration, frequency, pulse_pad=0):
         frequency      : carrier frequency of pulse
         pulse_pad      : zero amplitude padding of pulse
     '''
-    return np.sin(time*frequency*2*np.pi+np.pi/5)*(np.heaviside(time-pulse_pad, 1)-np.heaviside(time-pulse_duration-pulse_pad, 1))
+    return np.cos(time*frequency*2*np.pi+phase)*(np.heaviside(time-pulse_pad, 1)-np.heaviside(time-pulse_duration-pulse_pad, 1))
 
 def Vp_from_PdBm(P_dBm, R=50):
     '''
@@ -354,7 +365,12 @@ def _solve_nan(array):
     '''
     idxs_nan = np.where(np.isnan(array))[0]
     for i in idxs_nan:
-        array[i] = np.mean([array[[i-1, i+1]]])
+        p1 = np.mean([array[[i-1, i+1]]])
+        p2 = np.mean([array[[i-2, i+2]]])
+        if p1<p2:
+            array[i] = 0
+        else:
+            array[i] = np.mean([array[[i-1, i+1]]])
     return array
 
 def PSD_thermal_quantum(f, T):
@@ -400,6 +416,19 @@ def PSD_thermal_bose(f, T):
     # power spectral density
     PSD = 4*kB*T*eta
     return PSD
+
+def effective_josephson_energy(Ej1_norm, Ej2_norm, phi):
+    Ej_sum = Ej1_norm+Ej2_norm
+    d = (Ej2_norm-Ej1_norm)/Ej_sum
+    Ej_eff = Ej_sum*np.cos(np.pi*phi)*np.sqrt(1 + (d*np.tan(np.pi*phi))**2)
+    return Ej_eff
+    
+def josephson_inductance(Ej_norm):
+    h = constants.h
+    phi_0 = constants.physical_constants['mag. flux quantum'][0]
+    Ej = Ej_norm*h
+    Lj = phi_0**2/((2*np.pi)**2 * Ej)
+    return abs(Lj)
 
 ##############################################
 # Main class
@@ -474,7 +503,7 @@ class Network():
         '''
         # Assertion
         assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
-        # add a series capacitance element to network
+        # add a series inductance element to network
         if element_type == 'series':
             Z = lambda frequency: Z_inductor(Freq=frequency, L=L)
             M_L = lambda frequency: M_series_impedance(Z=Z(frequency))
@@ -522,9 +551,9 @@ class Network():
         M_t = lambda frequency: M_series_transline(Freq=frequency, l=length, v=phase_velocity, Z0=Z0)
         # if element already exists
         if element_idx is None:
-            self._add_element(M_t, name='transmission_line', properties={'length': length})
+            self._add_element(M_t, name='transmission_line', properties={'length': length, 'Z0': Z0, 'phase_velocity': phase_velocity})
         else:
-            self._substitute_element(M_t, element_idx, name='transmission_line', properties={'length': length})
+            self._substitute_element(M_t, element_idx, name='transmission_line', properties={'length': length, 'Z0': Z0, 'phase_velocity': phase_velocity})
 
     def add_parallel_transmission_line(self, length: float, Z0: float, phase_velocity: float, Z_load: float, element_idx=None):
         '''
@@ -539,9 +568,9 @@ class Network():
         M_t = lambda frequency: M_parallel_impedance(Z_term_transline(frequency, l=length, v=phase_velocity, Z0=Z0, ZL=Z_load))
         # if element already exists
         if element_idx is None:
-            self._add_element(M_t, name='parallel_transmission_line', properties={'Z_load': Z_load, 'length': length})
+            self._add_element(M_t, name='parallel_transmission_line', properties={'Z_load': Z_load, 'length': length, 'Z0': Z0, 'phase_velocity': phase_velocity})
         else:
-            self._substitute_element(M_t, element_idx, name='parallel_transmission_line', properties={'Z_load': Z_load, 'length': length})
+            self._substitute_element(M_t, element_idx, name='parallel_transmission_line', properties={'Z_load': Z_load, 'length': length, 'Z0': Z0, 'phase_velocity': phase_velocity})
 
     def add_transformer(self, L1: float, L2: float, M: float, element_idx=None):
         '''
@@ -656,6 +685,33 @@ class Network():
         else:
             self._substitute_element(M_a, element_idx, name=f'amplifier_{gain_dB:.0f}')
 
+    def add_SQUID(self, Ej1: float, Ej2: float, phi: float, element_type: str, element_idx=None):
+        '''
+        Add a SQUID element to the network.
+        (This component is implemented as a variable inductance).
+        Args:
+            Ej1/Ej2       : Josephson energies (Hz)
+            phi           : external flux threading squid (flux quantum phi_0)
+            element_idx   : position index in network (used only to replace existing elements)
+        '''
+        # Assertion
+        assert element_type in ['series', 'parallel'], 'type must be "series" or "parallel"'
+        # Compute Josephson inductance
+        Ej_eff = effective_josephson_energy(Ej1, Ej2, phi)
+        L_eff = josephson_inductance(Ej_eff)
+        # add a series inductance element to network
+        if element_type == 'series':
+            Z = lambda frequency: Z_inductor(Freq=frequency, L=L_eff)
+            M_J = lambda frequency: M_series_impedance(Z=Z(frequency))
+        else:
+            Z = lambda frequency: Z_inductor(Freq=frequency, L=L_eff)
+            M_J = lambda frequency: M_parallel_impedance(Z=Z(frequency))
+        # if element already exists
+        if element_idx is None:
+            self._add_element(M_J, name=f'SQUID_{element_type}', properties={'Ej1': Ej1, 'Ej2': Ej2, 'phi': phi})
+        else:
+            self._substitute_element(M_J, element_idx, name=f'SQUID_{element_type}', properties={'Ej1': Ej1, 'Ej2': Ej2, 'phi': phi})
+
     def add_custom_component(self, name: str, temperature_K: float, element_idx=None, plot_params: bool = False):
         '''
         Add a component from S matrix data available in .s2p file.
@@ -714,19 +770,29 @@ class Network():
             if True:
                 # deal with negative frequencies
                 _frequency = np.abs(frequency)
-                return np.moveaxis(np.array([[A(_frequency), B(_frequency)],
-                                             [C(_frequency), D(_frequency)]]), -1, 0)
+                __A = A(_frequency)
+                __B = B(_frequency)
+                __C = C(_frequency)
+                __D = D(_frequency)
+                # conjugate terms of negative frequency
+                idx = np.where(frequency<0)
+                __A[idx] = np.conj(__A[idx])
+                __B[idx] = np.conj(__B[idx])
+                __C[idx] = np.conj(__C[idx])
+                __D[idx] = np.conj(__D[idx])
+                return np.moveaxis(np.array([[__A, __B],
+                                             [__C, __D]]), -1, 0)
             else:
                 raise ValueError('frequency out of component range!')
         # if element already exists
         element_type = next((line for line in data["metadata"] if "type" in line.lower()), 'unknown commercial component')
         model = next((line for line in data["metadata"] if "model" in line.lower()), 'unknown commercial component').split(' ')[1]
         if element_idx is None:
-            self._add_element(M_CC, name='commercial_component', properties={'type':element_type, 
+            self._add_element(M_CC, name='commercial_component', properties={'type': element_type, 
                                                                              'model': model, 
                                                                              'temperature_K': temperature_K})
         else:
-            self._substitute_element(M_CC, element_idx, name='commercial_component', properties={'type':element_type, 
+            self._substitute_element(M_CC, element_idx, name='commercial_component', properties={'type': element_type, 
                                                                                                  'model': model,
                                                                                                  'temperature_K': temperature_K})
 
@@ -926,7 +992,7 @@ class Network():
         # get voltage and current phasors at node
         vnode, inode = self.get_node_VI(node_idx=node_idx, in_freq=frequency, in_amp=in_amp, Z_load=Z_load)
         # get voltage and current phasors at node
-        pnode_W = np.abs(vnode*inode)
+        pnode_W = np.abs(vnode*inode)/2
         # Convert W to dBm
         pnode_dBm = 10*np.log10(pnode_W*1e3)
         # plot power vs node of network
@@ -958,7 +1024,8 @@ class Network():
         # assertion
         assert len(time) == len(signal), 'time and signal axis must have same dimensions!'
         # express signal in frequency domain
-        freq_axis, fft = get_fft_from_pulse(time_axis=time, pulse=signal)
+        flip = kw.get('flip', False)
+        freq_axis, fft = get_fft_from_pulse(time_axis=time, pulse=signal, flip=flip)
         # compute Scattering parameters of network along frequency domain
         s11, s12, s21, s22 = self.get_S_parameters(frequency=freq_axis)
         # resolve nans in scattering parameters
@@ -966,10 +1033,10 @@ class Network():
         # compute scattered spectrum
         fft_11, fft_12, fft_21, fft_22 = s11*fft, s12*fft, s21*fft, s22*fft
         # recover signal in time domain
-        _time, signal_11 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_11)
-        _time, signal_12 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_12)
-        _time, signal_21 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_21)
-        _time, signal_22 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_22)
+        _time, signal_11 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_11, flip=flip)
+        _time, signal_12 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_12, flip=flip)
+        _time, signal_21 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_21, flip=flip)
+        _time, signal_22 = get_pulse_from_fft(freq_axis=freq_axis, fft=fft_22, flip=flip)
         # assert the signal is real (apart from numerical errors)
         # assert all(np.imag(signal_11)<1e-6)
         # assert all(np.imag(signal_12)<1e-6)
@@ -1009,7 +1076,7 @@ class Network():
                         set_xlabel(ax, 'time', unit='s')
                 fig.suptitle('Scattered signal')
             fig.tight_layout()
-        return time, signal_11, signal_12, signal_21, signal_22
+        return _time, signal_11, signal_12, signal_21, signal_22
 
     def get_psd_at_node(self, frequency: list, node_idx: int = None, initial_node_temp: float = 300, plot: bool = False, add_rates : bool = False, **kw):
         '''
@@ -1026,8 +1093,6 @@ class Network():
             node_idx = len(self.elements)
         # Start with a 300 K PSD
         PSD = PSD_thermal_quantum(frequency, T=initial_node_temp)
-        # # Quantum coherent state fluctuations
-        # PSD_Q = PSD_quantum(frequency, self.Zgen)
         if plot:
             fig, ax = plt.subplots(figsize=(4, 6))
             norm = matplotlib.colors.Normalize(vmin=0, vmax=node_idx)
@@ -1078,6 +1143,8 @@ class Network():
                 # add both emission and absorption rate
                 if add_rates:
                     PSD += (1-attn)*PSD_thermal_quantum(-frequency, temperature_K)
+            else:
+                temperature_K = initial_node_temp
             # plot current PSD
             if plot:
                 ax.plot(frequency, PSD, label=f'node {_node_idx} ({quantity_to_string(temperature_K, "K")})', color=cmap(norm(_node_idx)))
@@ -1195,9 +1262,10 @@ class Network():
 
     def find_resonance_parameters(self, frequency_bounds: tuple, kappa_bounds: tuple = (-5e6, +5e6)):
         '''
-        Function used to detect resonator frequencies and kappas.
+        Function used to detect resonance modes.
         This is done by searching for poles and zeros in complex
-        frequency space.
+        frequency space. 
+        Returns the resonance frequency and kappa of the mode.
         '''
         # initial guess is estimated with linear frequency sweep
         freq_axis = np.linspace(*frequency_bounds, int(1e3))
@@ -1224,6 +1292,99 @@ class Network():
         bounds = [frequency_bounds, kappa_bounds]
         _, k0 = minimize(cost_func, x0=initial_guess, options={'disp':False}, bounds=bounds, method='Powell').x
         return f0, k0
+
+    def sweep_element_parameter(self, value: float, element_idx: int, element_property: str):
+        '''
+        Sweeps
+        '''
+        # Make sure element exists
+        assert element_property in self.element_properties[element_idx].keys(), 'property not in element!'
+        # compile element properties except for the sweep
+        properties = {key: val for key, val in self.element_properties[element_idx].items() if key != element_property}
+        # get element name
+        element_name = self.elements[element_idx][0]
+        if ('_series' in element_name):
+            element_name = element_name.split('_series')[0]
+            properties['element_type'] = 'series'
+        elif ('_parallel' in element_name):
+            element_name = element_name.split('_parallel')[0]
+            properties['element_type'] = 'parallel'
+        # find "add_element" function
+        add_methods = [ method for method in dir(self) if 'add' in method ]
+        method_name = [ method for method in add_methods if f'add_{element_name}' in method ][0]
+        method = getattr(self, method_name)
+        # change property value
+        properties[element_property] = value
+        # change method
+        method(element_idx=element_idx, **properties)
+
+
+    def get_S_versus_parameters(self, frequency: list, values: list, element_idx: int, element_property: str, plot: bool = False, **kw):
+
+        if type(values) is list:
+            values = np.array(values)
+        if type(frequency) is list:
+            frequency = np.array(frequency)
+        S11, S12, S21, S22 = np.zeros((len(values),len(frequency)), dtype=complex),\
+                             np.zeros((len(values),len(frequency)), dtype=complex),\
+                             np.zeros((len(values),len(frequency)), dtype=complex),\
+                             np.zeros((len(values),len(frequency)), dtype=complex)
+        for i, val in enumerate(values):
+            # sweep element parameter
+            self.sweep_element_parameter(value=val, element_idx=element_idx, element_property=element_property)
+            S11[i], S12[i], S21[i], S22[i] = self.get_S_parameters(frequency=frequency)
+        # plot parameters
+        if plot:
+            yscale = kw.get('yscale', 'linear')
+            xscale = kw.get('xscale', 'linear')
+            cmap = kw.get('cmap', 'viridis')
+            plot_phase = kw.get('plot_phase', False)
+            # plot single s parameter
+            if isinstance(plot, str):
+                assert plot.lower() in ['s11', 's12', 's21', 's22']
+                s_param_dict = {'s11': S11, 's12': S12, 's21': S21, 's22': S22}
+                fig, ax = plt.subplots(figsize=(4,3))
+                s_param = np.abs(s_param_dict[plot.lower()])
+                if yscale == 'dB':
+                    s_param = 20*np.log10(s_param)
+                    set_ylabel(ax, f'$|S_{{{plot.lower().split("s")[-1]}}}|$ (dB)')
+                else:
+                    ax.set_yscale(yscale)
+                    set_ylabel(ax, f'$|S_{{{plot.lower().split("s")[-1]}}}|$')
+                for i, val in enumerate(values):
+                    c_percentage = (val-values.min())/(values.max()-values.min())
+                    pt.plot_line_cmap(frequency, s_param[i], color_percentage=c_percentage, cmap=cmap)
+                ax.set_xscale(xscale)
+                set_xlabel(ax, 'frequency', 'Hz')
+                if plot_phase:
+                    axt = ax.twinx()
+                    axt.plot(frequency, np.angle(s_param_dict[plot.lower()]), ls='--', color='C2', alpha=.5, zorder=-1)
+                    set_ylabel(axt, 'phase', unit='rad')
+                    axt.set_yticks([-np.pi, 0, np.pi])
+                    axt.set_yticklabels(['$-\\pi$', '0', '$\\pi$'])
+                fig.tight_layout()
+                ax.set_title('Scattering parameter')
+                pt.get_cbar(ax=ax, orientation='vertical', pos=None, dims=None, label=element_property, unit=None, vmin=values.min(), vmax=values.max())
+            else:
+                # plot all s parameters
+                fig, axs = plt.subplots(figsize=(8,5), ncols=2, nrows=2, sharex='col')#, sharey='row')
+                for ax, s_param, name in zip(axs.flatten(), [S11, S12, S21, S22], ['S_{11}', 'S_{12}', 'S_{21}', 'S_{22}']):
+                    if yscale == 'dB':
+                        s_param = 20*np.log10(np.abs(s_param))
+                        set_ylabel(ax, f'$|{name}|$ (dB)')
+                    else:
+                        s_param = np.abs(s_param)
+                        ax.set_yscale(yscale)
+                        set_ylabel(ax, f'$|{name}|$')
+                    for i, val in enumerate(values):
+                        c_percentage = (val-values.min())/(values.max()-values.min())
+                        pt.plot_line_cmap(frequency, s_param[i], color_percentage=c_percentage, cmap=cmap)
+                    ax.set_xscale(xscale)
+                    if name in ['S_{21}', 'S_{22}']:
+                        set_xlabel(ax, 'frequency', 'Hz')
+                fig.suptitle('Scattering parameters')
+                fig.tight_layout()
+        return S11, S12, S21, S22
 
     #################################################
     # Plot network
@@ -1346,6 +1507,17 @@ class Network():
                     # ax.plot([x_i+.2], [-1.2], color='k', ls='None', marker='o', markersize=6, clip_on=False)
                 else:
                     cd.plot_transmission_line(x_i+.2, -.3, .9, horizontal=False, radius=.2) # FIX this
+            # plot SQUID in series
+            elif name == 'SQUID_series':
+                phi = self.element_properties[i]['phi']
+                cd.plot_SQUID(x_i, 0, x_j, 0, w=.6, l_junction=.125)
+            # plot SQUID in parallel
+            elif name == 'SQUID_parallel':
+                phi = self.element_properties[i]['phi']
+                ax.plot([x_i, x_j], [0, 0], color='k', solid_capstyle='round', linewidth=4, clip_on=False)
+                cd.plot_SQUID(xij, 0, xij, -1.2, w=.6, l_junction=.125)
+                cd.plot_ground(xij, -1., .2, horizontal=False)
+                ax.text(xij, -.6, '\n'.join(quantity_to_string(phi, '$\\Phi_0$').split(' ')), va='center', ha='center', color='gray', fontsize=7)
             # plot attenuator
             elif 'attenuator' in name:
                 attn_dB = self.element_properties[i]['attn_dB']
