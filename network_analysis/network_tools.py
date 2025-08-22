@@ -16,7 +16,6 @@ def Z_capacitor(Freq: np.array, C: float):
         Freq : frequency in Hz
         C    : capacitance in F
     '''
-    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = -1j/(w*C)
     return Z_in
@@ -28,7 +27,6 @@ def Z_inductor(Freq: np.array, L: float):
         Freq : frequency in Hz
         L    : inductance in H
     '''
-    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = 1j*w*L
     return Z_in
@@ -40,7 +38,6 @@ def Z_resistor(Freq: np.array, R: float):
         Freq : frequency in Hz
         R    : resistance in Ohms
     '''
-    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     w = 2*np.pi*Freq
     Z_in = np.ones(w.shape, dtype=np.complex_)*R
     return Z_in
@@ -54,7 +51,6 @@ def Z_term_transline(Freq: np.array, l: float, v: float, Z0: float, ZL: float = 
         Z0     : characteristic impedance of transmission line in Ohms
         ZL     : (termination) load impedance in Ohms
     '''
-    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     beta = 2*np.pi*Freq/v
     Z_in = Z0*( ZL + 1j*Z0*np.tan(beta*l) )/( Z0 + 1j*ZL*np.tan(beta*l) )
     return Z_in
@@ -74,11 +70,16 @@ def M_series_impedance(Z: np.array):
     Args:
         Z : impedance of element in series
     '''
-    assert len(Z.shape) == 1, 'Impedance should be given as 1D array'
-    M = np.zeros((len(Z), 2, 2), dtype=np.complex_)
-    for i in range(len(Z)):
-        M[i] = np.array([[1, Z[i]],
-                         [0,   1]])
+    # Define coefficient functions for ABCD
+    def A(x): return np.ones(x.shape, dtype=complex)
+    def B(x): return x
+    def C(x): return np.zeros(x.shape, dtype=complex)
+    def D(x): return np.ones(x.shape, dtype=complex)
+    # generate M matrices for each impedance
+    M = np.stack([
+        np.stack([A(Z), B(Z)], axis=-1),
+        np.stack([C(Z), D(Z)], axis=-1)
+    ], axis=-2)
     return M
 
 def M_parallel_impedance(Z: np.array):
@@ -87,11 +88,16 @@ def M_parallel_impedance(Z: np.array):
     Args:
         Z : impedance of element in parallel
     '''
-    assert len(Z.shape) == 1, 'Impedance should be given as 1D array'
-    M = np.zeros((len(Z), 2, 2), dtype=np.complex_)
-    for i in range(len(Z)):
-        M[i] = np.array([[     1, 0],
-                         [1/Z[i], 1]])
+    # Define coefficient functions for ABCD
+    def A(x): return np.ones(x.shape, dtype=complex)
+    def B(x): return np.zeros(x.shape, dtype=complex)
+    def C(x): return 1/x
+    def D(x): return np.ones(x.shape, dtype=complex)
+    # generate M matrices for each impedance
+    M = np.stack([
+        np.stack([A(Z), B(Z)], axis=-1),
+        np.stack([C(Z), D(Z)], axis=-1)
+    ], axis=-2)
     return M
 
 def M_series_transline(Freq: np.array, l: float, v: float, Z0: float):
@@ -103,12 +109,17 @@ def M_series_transline(Freq: np.array, l: float, v: float, Z0: float):
         v      : speed of light in transmission line in m/s
         Z0     : characteristic impedance of transmission line in Ohms
     '''
-    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     beta = 2*np.pi*Freq/v
-    M = np.zeros((len(beta), 2, 2), dtype=np.complex_)
-    for i in range(len(beta)):
-        M[i] = np.array([[np.cos(beta[i]*l), 1j*Z0*np.sin(beta[i]*l)],
-                         [1j/Z0*np.sin(beta[i]*l), np.cos(beta[i]*l)]])
+    # Define coefficient functions for ABCD
+    def A(x): return np.cos(x*l).astype(complex)
+    def B(x): return 1j*Z0*np.sin(x*l)
+    def C(x): return 1j/Z0*np.sin(x*l)
+    def D(x): return np.cos(x*l).astype(complex)
+    # generate M matrices for each impedance
+    M = np.stack([
+        np.stack([A(beta), B(beta)], axis=-1),
+        np.stack([C(beta), D(beta)], axis=-1)
+    ], axis=-2)
     return M
 
 def M_inductively_coupled_impedance(Freq: np.array, Z: float, L1: float, L2: float, M:float):
@@ -161,10 +172,15 @@ def M_transformer(Freq: np.array, L1: float, L2: float, M: float):
     Zb = Z_inductor(Freq, L=Lb)
     Zc = Z_inductor(Freq, L=Lc)
     # T network ABCD matrix
-    M = np.zeros((len(Freq), 2, 2), dtype=np.complex_)
-    for i in range(len(Freq)):
-        M[i] = np.array([[1+Za[i]/Zc[i], Za[i]+Zb[i]+Za[i]*Zb[i]/Zc[i]],
-                         [      1/Zc[i],                 1+Zb[i]/Zc[i]]])
+    def A(x): return 1+Z_inductor(x, L=La)/Z_inductor(x, L=Lc)
+    def B(x): return Z_inductor(x, L=La)+Z_inductor(x, L=Lb)+Z_inductor(x, L=La)*Z_inductor(x, L=Lb)/Z_inductor(x, L=Lc)
+    def C(x): return 1/Z_inductor(x, L=Lc)
+    def D(x): return 1+Z_inductor(x, L=Lb)/Z_inductor(x, L=Lc)
+    # generate M matrices for each impedance
+    M = np.stack([
+        np.stack([A(Freq), B(Freq)], axis=-1),
+        np.stack([C(Freq), D(Freq)], axis=-1)
+    ], axis=-2)
     return M
 
 def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
@@ -181,26 +197,35 @@ def M_attenuator(Freq: np.array, attn_dB: float, Z0:float):
         attn_dB : power attenuation in dB
         Z0      : characteristic impedance in Ohms
     '''
-    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     assert attn_dB <=40, 'Attenuation must be at most 40 dB'
     w = 2*np.pi*Freq
     # attenuation linear
     attn = 10**(attn_dB/20)
     # deal with 0 dB attenuators
     if attn_dB == 0:
-        A, B, C, D = 1, 0, 0, 1
+        # ABCD matrix coefficients
+        A = 1
+        B = 0
+        C = 0
+        D = 1
     else:
         R1 = Z0*((attn+1)/(attn-1))
         R2 = Z0/2*(attn-1/attn)
         # ABCD matrix coefficients
-        A = 1 + R2/R1
-        B = R2
-        C = 2/R1 + R2/(R1**2)
-        D = 1 + R2/R1
-    M = np.zeros((len(Freq), 2, 2), dtype=np.complex_)
-    for i in range(len(Freq)):
-        M[i] = np.array([[A, B],
-                         [C, D]])
+        A_coef = 1 + R2/R1
+        B_coef = R2
+        C_coef = 2/R1 + R2/(R1**2)
+        D_coef = 1 + R2/R1
+    # ABCD coefficient functions
+    def A(x): return np.ones(x.shape, dtype=complex)*A_coef
+    def B(x): return np.ones(x.shape, dtype=complex)*B_coef
+    def C(x): return np.ones(x.shape, dtype=complex)*C_coef
+    def D(x): return np.ones(x.shape, dtype=complex)*D_coef
+    # generate M matrices for each impedance
+    M = np.stack([
+        np.stack([A(Freq), B(Freq)], axis=-1),
+        np.stack([C(Freq), D(Freq)], axis=-1)
+    ], axis=-2)
     return M
 
 def M_amplifier(Freq: np.array, gain_dB: float, Z0:float):
@@ -213,21 +238,26 @@ def M_amplifier(Freq: np.array, gain_dB: float, Z0:float):
         gain_dB : power gain in dB
         Z0      : characteristic impedance in Ohms
     '''
-    assert len(Freq.shape) == 1, 'Frequency should be given as 1D array'
     assert gain_dB <=50, 'Gain must be at most 50 dB'
     # attenuation linear
     gain = 10**(-gain_dB/20)
     R1 = Z0*((gain+1)/(gain-1))
     R2 = Z0/2*(gain-1/gain)
     # ABCD matrix coefficients
-    A = 1 + R2/R1
-    B = R2
-    C = 2/R1 + R2/(R1**2)
-    D = 1 + R2/R1
-    M = np.zeros((len(Freq), 2, 2), dtype=np.complex_)
-    for i in range(len(Freq)):
-        M[i] = np.array([[A, B],
-                         [C, D]])
+    A_coef = 1 + R2/R1
+    B_coef = R2
+    C_coef = 2/R1 + R2/(R1**2)
+    D_coef = 1 + R2/R1
+    # ABCD coefficient functions
+    def A(x): return np.ones(x.shape, dtype=complex)*A_coef
+    def B(x): return np.ones(x.shape, dtype=complex)*B_coef
+    def C(x): return np.ones(x.shape, dtype=complex)*C_coef
+    def D(x): return np.ones(x.shape, dtype=complex)*D_coef
+    # generate M matrices for each impedance
+    M = np.stack([
+        np.stack([A(Freq), B(Freq)], axis=-1),
+        np.stack([C(Freq), D(Freq)], axis=-1)
+    ], axis=-2)
     return M
 
 def multiply_matrices(M_list):
@@ -237,12 +267,12 @@ def multiply_matrices(M_list):
         M_list : List of ABCD matrix instances
     '''
     for i, m in enumerate(M_list):
-        assert len(m.shape) == 3 and m.shape[1:]==(2,2), f'M_list[{i}] must have shape (n, 2, 2)'
+        assert m.shape[-2:]==(2,2), f'M_list[{i}] must have shape (n1, n2, ..., 2, 2)'
     # Initialize the result as the first array
     result = M_list[0]
     # Compute the dot product sequentially with each subsequent array
     for arr in M_list[1:]:
-        result = np.einsum('nij,njk->nik', result, arr)
+        result = np.matmul(result, arr)
     return result
 
 def extract_S_pars(M, Zgen):
@@ -254,8 +284,8 @@ def extract_S_pars(M, Zgen):
         Zgen : port impedance used to compute scattering coefficients
     '''
     _shape = M.shape
-    assert len(_shape) == 3 and _shape[1:]==(2,2), 'M should have shape (n, 2, 2)'
-    A, B, C, D = M[:,0,0], M[:,0,1], M[:,1,0], M[:,1,1]
+    assert _shape[-2:]==(2,2), 'M should have shape (n, 2, 2)'
+    A, B, C, D = M[...,0,0], M[...,0,1], M[...,1,0], M[...,1,1]
     # Compute scattering parameters
     S11 = (A + B/Zgen - C*Zgen - D)/( A + B/Zgen + C*Zgen + D )
     S12 = 2*(A*D - B*C)/( A + B/Zgen + C*Zgen + D )
@@ -273,12 +303,12 @@ def extract_Z_pars(M, ZL):
         ZL : load impedance used to compute input/output impedance coefficients
     '''
     _shape = M.shape
-    assert len(_shape) == 3 and _shape[1:]==(2,2), 'M should have shape (n, 2, 2)'
+    assert _shape[-2:]==(2,2), 'M should have shape (n, 2, 2)'
     # Compute Z matrix
-    Z11 = M[:,0,0]/M[:,1,0]
-    Z12 = (M[:,0,0]*M[:,1,1] - M[:,0,1]*M[:,1,0])/M[:,1,0]
-    Z21 = 1/M[:,1,0]
-    Z22 = M[:,1,1]/M[:,1,0]
+    Z11 = M[...,0,0]/M[...,1,0]
+    Z12 = (M[...,0,0]*M[...,1,1] - M[...,0,1]*M[...,1,0])/M[...,1,0]
+    Z21 = 1/M[...,1,0]
+    Z22 = M[...,1,1]/M[...,1,0]
     # Compute input and output impedance
     Zin = Z11 - (Z12*Z21)/(Z22+ZL)
     Zout = Z22 - (Z12*Z21)/(Z11+ZL)
